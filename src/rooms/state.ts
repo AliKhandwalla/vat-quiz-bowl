@@ -20,6 +20,17 @@ export function mergeSnapshot(
   return {
     ...incoming,
     buzzer: newestBuzzer(previous.buzzer, incoming.buzzer),
+    ...(previous.competition &&
+    incoming.competition &&
+    previous.competition.revision > incoming.competition.revision
+      ? {
+          competition: previous.competition,
+          match: previous.match,
+          teams: previous.teams,
+          history: previous.history,
+          players: previous.players,
+        }
+      : {}),
   };
 }
 export function mergeBuzzer(

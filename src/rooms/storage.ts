@@ -1,4 +1,4 @@
-import type { RoomSession } from "./types";
+import type { CompetitionRequest, RoomSession } from "./types";
 
 const ACTIVE_KEY = "vat.active-room.v2";
 const HOST_KEY = "vat.host-room.v2";
@@ -69,4 +69,33 @@ export function pendingCreation(userId: string): {
 }
 export function finishCreation() {
   sessionStorage.removeItem("vat.pending-room.v2");
+}
+export function readCompetitionRequest(
+  roomId: string | undefined,
+): CompetitionRequest | null {
+  if (!roomId) return null;
+  try {
+    const value = JSON.parse(
+      sessionStorage.getItem(`vat.competition-request.${roomId}`) || "null",
+    );
+    return value?.roomId === roomId &&
+      typeof value.requestId === "string" &&
+      typeof value.matchId === "string" &&
+      typeof value.action === "string" &&
+      value.payload &&
+      typeof value.payload === "object"
+      ? value
+      : null;
+  } catch {
+    return null;
+  }
+}
+export function saveCompetitionRequest(value: CompetitionRequest) {
+  sessionStorage.setItem(
+    `vat.competition-request.${value.roomId}`,
+    JSON.stringify(value),
+  );
+}
+export function clearCompetitionRequest(roomId: string) {
+  sessionStorage.removeItem(`vat.competition-request.${roomId}`);
 }

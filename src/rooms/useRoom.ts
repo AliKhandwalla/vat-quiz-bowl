@@ -1,7 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { configurationError, supabase } from "../lib/supabase";
 import * as api from "./api";
-import { readRoomSession, saveRoomSession } from "./storage";
+import {
+  readRoomSession,
+  saveRoomSession,
+  readCompetitionRequest,
+  saveCompetitionRequest,
+  clearCompetitionRequest,
+} from "./storage";
 import { HEARTBEAT_MS } from "./types";
 import type {
   BuzzerAction,
@@ -9,6 +15,8 @@ import type {
   Connection,
   RoomSession,
   RoomSnapshot,
+  CompetitionAction,
+  CompetitionRequest,
 } from "./types";
 import { mergeBuzzer, mergeSnapshot } from "./state";
 
@@ -23,6 +31,13 @@ export function useRoom() {
   const [buzzError, setBuzzError] = useState("");
   const [buzzing, setBuzzing] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [competitionSyncing, setCompetitionSyncing] = useState(false);
+  const [pendingRequest, setPendingRequest] =
+    useState<CompetitionRequest | null>(() =>
+      readCompetitionRequest(session?.roomId),
+    );
+  const pendingRef = useRef(pendingRequest);
+  const targetCompetitionRevision = useRef(0);
   const [retry, setRetry] = useState(0);
   const [serverOffset, setServerOffset] = useState(0);
   const [clock, setClock] = useState(Date.now());
@@ -31,6 +46,23 @@ export function useRoom() {
   const buzzFlight = useRef<symbol | null>(null);
   const currentSession = useRef(session);
   currentSession.current = session;
+  const currentSnapshot = useRef(snapshot);
+  currentSnapshot.current = snapshot;
+
+  useEffect(() => {
+    const saved = readCompetitionRequest(session?.roomId);
+    pendingRef.current = saved;
+    setPendingRequest(saved);
+    targetCompetitionRevision.current = 0;
+    setCompetitionSyncing(false);
+  }, [session?.roomId, session?.role]);
+  useEffect(() => {
+    if (
+      (snapshot?.competition?.revision ?? 0) >=
+      targetCompetitionRevision.current
+    )
+      setCompetitionSyncing(false);
+  }, [snapshot?.competition?.revision]);
 
   useEffect(() => {
     // A new authoritative round can accept a new attempt even if an old HTTP
@@ -84,6 +116,10 @@ export function useRoom() {
         const next = await api.getSnapshot(session!);
         if (disposed) return;
         setSnapshot((previous) => mergeSnapshot(previous, next));
+        if (
+          (next.competition?.revision ?? 0) >= targetCompetitionRevision.current
+        )
+          setCompetitionSyncing(false);
         setServerOffset(Date.parse(next.server_time) - Date.now());
         setClock(Date.now());
         setError("");
@@ -136,6 +172,30 @@ export function useRoom() {
       .channel(`quiz-room:${session.roomId}`, {
         config: { postgres_changes_options: { wait: true } },
       })
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "quiz_competition",
+          filter: `room_id=eq.${session.roomId}`,
+        },
+        (payload) => {
+          if (disposed) return;
+          const value = payload.new as { revision?: number };
+          if (
+            (value.revision ?? 0) <=
+            (currentSnapshot.current?.competition?.revision ?? -1)
+          )
+            return;
+          targetCompetitionRevision.current = Math.max(
+            targetCompetitionRevision.current,
+            value.revision ?? 0,
+          );
+          setCompetitionSyncing(true);
+          void refresh();
+        },
+      )
       .on(
         "postgres_changes",
         {
@@ -253,6 +313,8 @@ export function useRoom() {
       !state ||
       state.status !== "ready" ||
       connection !== "connected" ||
+      competitionSyncing ||
+      snapshot?.match?.status !== "active" ||
       buzzFlight.current
     )
       return;
@@ -271,6 +333,10 @@ export function useRoom() {
           );
         if (result.reason === "paused")
           setBuzzError("Buzzers are paused. Waiting for host.");
+        if (result.reason === "match_ended") {
+          setBuzzError("The match has ended.");
+          void refreshRef.current();
+        }
       }
     } catch (failure) {
       if (buzzFlight.current === flight) {
@@ -299,6 +365,56 @@ export function useRoom() {
     return success;
   }
 
+  async function executeCompetition(request: CompetitionRequest) {
+    if (!session) throw new Error("HOST_UNAUTHORIZED");
+    try {
+      const next = await api.manageCompetition(session, request);
+      clearCompetitionRequest(request.roomId);
+      pendingRef.current = null;
+      setPendingRequest(null);
+      setSnapshot((previous) =>
+        previous?.room.id === next.room.id
+          ? mergeSnapshot(previous, next)
+          : previous,
+      );
+    } catch (failure) {
+      if (api.isDefinitiveFailure(failure)) {
+        clearCompetitionRequest(request.roomId);
+        pendingRef.current = null;
+        setPendingRequest(null);
+      }
+      void refreshRef.current();
+      throw failure;
+    }
+  }
+  function mutate(
+    action: CompetitionAction,
+    payload: Record<string, unknown> = {},
+  ) {
+    return run(async () => {
+      if (!session || session.role !== "host")
+        throw new Error("HOST_UNAUTHORIZED");
+      if (pendingRef.current) throw new Error("PENDING_COMPETITION_ACTION");
+      if (!snapshot?.competition || !snapshot.match)
+        throw new Error("COMPETITION_MIGRATION_REQUIRED");
+      if (connection !== "connected" || competitionSyncing)
+        throw new Error("WAIT_FOR_SYNC");
+      const request: CompetitionRequest = {
+        roomId: session.roomId,
+        matchId: snapshot.match.id,
+        requestId: crypto.randomUUID(),
+        action,
+        payload: ["next_question", "next_round"].includes(action)
+          ? { ...payload, expected_round_id: snapshot.buzzer?.round_id }
+          : payload,
+      };
+      saveCompetitionRequest(request);
+      pendingRef.current = request;
+      setPendingRequest(request);
+      await executeCompetition(request);
+    });
+  }
+
   return {
     session,
     snapshot,
@@ -308,6 +424,13 @@ export function useRoom() {
     buzzing,
     buzzError,
     control,
+    mutate,
+    pendingRequest,
+    competitionSyncing,
+    retryCompetition: () =>
+      run(async () => {
+        if (pendingRef.current) await executeCompetition(pendingRef.current);
+      }),
     refresh: () => refreshRef.current(),
     busy,
     configurationError,

@@ -61,6 +61,13 @@ export async function testBuzzerDatabase(postgres, admin) {
     }
     const snapshot = (actor) =>
       rpc(actor, "get_quiz_room", [room.id, actor === host ? token : null]);
+    const initial = await snapshot(host);
+    if (initial.competition) {
+      for (let i=0;i<players.length;i++) {
+        const team=initial.teams.find(t=>t.name===(i%2?'Gold':'Blue'));
+        await rpc(host,'manage_quiz_competition',[room.id,token,initial.match.id,randomUUID(),'assign_player',{player_id:players[i].playerId,team_id:team.id}]);
+      }
+    }
     let state = (await snapshot(host)).buzzer;
     const control = (action) =>
       rpc(host, "control_quiz_buzzer", [

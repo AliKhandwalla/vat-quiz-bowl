@@ -7,6 +7,7 @@ import type {
   BuzzerAction,
   BuzzerState,
   BuzzResult,
+  CompetitionRequest,
 } from "./types";
 import {
   finishCreation,
@@ -33,6 +34,39 @@ export function friendlyError(error: unknown): string {
         : String(error);
   if (message.includes("ROOM_NOT_FOUND"))
     return "That room code was not found. Check the six-character code with your host.";
+  if (message.includes("COMPETITION_MIGRATION_REQUIRED"))
+    return "Apply the Phase IV migration (202610270003_competition.sql) in Supabase SQL Editor, then retry.";
+  if (message.includes("PENDING_COMPETITION_ACTION"))
+    return "Resolve the saved action with “Retry saved action” before making another change. It will not be counted twice.";
+  if (message.includes("WAIT_FOR_SYNC"))
+    return "Wait for the live room to finish updating, then try again.";
+  if (message.includes("MATCH_ENDED"))
+    return "This match has ended. Final scores are read-only. The host can start a new match.";
+  if (message.includes("MATCH_STILL_ACTIVE"))
+    return "End the active match before starting another.";
+  if (message.includes("STALE_MATCH"))
+    return "The match changed. Your action was not applied to the new match. Review the current dashboard.";
+  if (message.includes("TEAM_NAME_TAKEN"))
+    return "That team name is already in use in this room.";
+  if (message.includes("INVALID_TEAM_NAME"))
+    return "Enter a team name between 1 and 32 characters.";
+  if (message.includes("TEAM_NOT_EMPTY"))
+    return "Reassign every player on this team before removing it.";
+  if (message.includes("TEAM_HAS_SCORE"))
+    return "A team with points cannot be removed during this match. Keep it for the final standings.";
+  if (
+    message.includes("TEAM_NOT_FOUND") ||
+    message.includes("PLAYER_NOT_FOUND")
+  )
+    return "That team or player is no longer available. Refresh the room and try again.";
+  if (message.includes("INVALID_SCORE"))
+    return "Use a nonzero whole-number adjustment between −10,000 and +10,000.";
+  if (message.includes("SCORE_LIMIT"))
+    return "This adjustment would exceed the supported score range (−1 billion to +1 billion).";
+  if (message.includes("REQUEST_CONFLICT"))
+    return "This saved request does not match the original action. Refresh the room before continuing.";
+  if (message.includes("INVALID_COMPETITION_INPUT"))
+    return "Check the team, player, and whole-number values, then try again.";
   if (message.includes("ROOM_CLOSED"))
     return "This room is not accepting new players. Ask your host to reopen joining.";
   if (message.includes("BUZZER_MIGRATION_REQUIRED"))
@@ -169,3 +203,18 @@ export function submitBuzz(
     p_round_id: roundId,
   });
 }
+export function manageCompetition(
+  session: RoomSession,
+  request: CompetitionRequest,
+): Promise<RoomSnapshot> {
+  if (session.role !== "host") throw new Error("HOST_UNAUTHORIZED");
+  return rpc<RoomSnapshot>("manage_quiz_competition", {
+    p_room_id: session.roomId,
+    p_host_token: session.hostToken,
+    p_match_id: request.matchId,
+    p_request_id: request.requestId,
+    p_action: request.action,
+    p_payload: request.payload,
+  });
+}
+export { isDefinitiveFailure } from "./errors";

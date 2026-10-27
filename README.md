@@ -1,105 +1,106 @@
-# VAT Quiz Bowl — Phase III
+# VAT Quiz Bowl — Phase IV
 
-The existing React, TypeScript, Vite, Tailwind CSS, and Lucide interface now includes server-authoritative live buzzers, synchronized round controls, persistent rooms/players, and secure guest/host sessions. Scoring remains a local preview; no Phase IV scoring or tournament features are implemented.
+The existing React, TypeScript, Vite, Tailwind CSS, and Lucide interface now supports a complete live quiz bowl match: host-managed teams, persistent scoring, question/round tracking, authoritative buzzers, final standings, and new matches. Existing routes, branding, guest sessions, and room codes are retained. No Phase V deployment work is included.
 
-## Setup
+## Setup / upgrade
 
-1. Run `npm install` using Node.js 22 or newer.
-2. Copy `.env.example` to `.env.local`. Enter your Supabase project URL and **publishable key** (or legacy **anon** key). No service-role key or database password is needed by the application.
-3. In Supabase **Authentication → Sign In / Providers**, enable **Anonymous Sign-Ins**. These provide signed guest identities without a sign-in form; guests use the `authenticated` PostgreSQL role.
-4. For a **new project**, run `supabase/migrations/202610270001_quiz_rooms.sql` followed by `supabase/migrations/202610270002_quiz_buzzer.sql` in the SQL Editor. For an **existing Phase II project**, run only the new `202610270002_quiz_buzzer.sql` file. Copy and execute the **entire file**, including `begin` and `commit`. Alternatively use your linked Supabase CLI migration workflow. Do not rerun an already applied raw migration. These files contain the exact SQL; there are no placeholder secrets or additional privileged API endpoints to deploy.
-5. Keep `quiz_private` **out of the Data API's exposed schemas**. Only `public` needs to be exposed. Ensure Realtime is enabled for `public.quiz_rooms`, `public.quiz_players`, and `public.quiz_buzzer`; the migrations add all three to `supabase_realtime`.
-6. Run `npm run dev` and open the printed localhost URL. Restart Vite after changing environment variables.
+1. Use Node.js 24 (or 22.18+) and run `npm install`.
+2. Copy `.env.example` to `.env.local` and set the Supabase URL and browser-safe **publishable** key (or legacy **anon** key). Never use a service-role key, secret key, or database password in frontend configuration. Restart Vite after changing environment variables.
+3. Enable **Anonymous Sign-Ins** in Supabase Authentication → Sign In / Providers. Guests receive signed identities without a sign-in form.
+4. In the Supabase SQL Editor, execute each required migration **in order**, copying the entire file including `begin` / `commit`:
+   - New project: `202610270001_quiz_rooms.sql`, then `202610270002_quiz_buzzer.sql`, then `202610270003_competition.sql` from `supabase/migrations/`.
+   - Existing Phase III project: run **only** `supabase/migrations/202610270003_competition.sql`.
+   - Do not rerun an already applied raw migration. A linked Supabase CLI migration workflow is also supported.
+5. Keep `quiz_private` out of Data API exposed schemas. The public schema supplies the restricted RPCs. The migrations enable Realtime publication for `quiz_rooms`, `quiz_players`, `quiz_buzzer`, `quiz_teams`, `quiz_matches`, and `quiz_competition`.
+6. Run `npm run dev` and open the printed localhost URL.
 
-For the configured project, the browser-safe URL/key are saved in ignored `.env.local`. Anonymous sign-ins and both migrations were applied during development. Do not commit `.env.local`.
+The supplied project is configured in ignored `.env.local`; all three migrations were applied and live integration tests executed during this phase. No new environment variables or privileged credentials are required for Phase IV. The public key cannot install SQL migrations, which is why the SQL Editor step is necessary.
 
-`npm run build` runs TypeScript checks and produces the static production site in `dist/`. `npm run preview` serves that build locally. Set the same public environment variables in the deployment build environment. Use an HTTPS static host for students on other devices; sharing a localhost URL does not make the frontend accessible elsewhere. Database functions remain in Supabase. Navigation uses hash routes, so no server route rewrites are required.
+`npm run build` runs TypeScript and creates `dist/`. `npm run preview` serves that build locally. Hash routes work on static hosting. This phase does not publish the frontend or change hosting. A localhost address is accessible only on that machine; an already hosted frontend must receive the updated build for other devices to use these changes.
 
-## Live rooms
+## Run a match
 
-1. Click **Host a Game**. The server creates a room with a random six-character code. An existing active host session resumes its room.
-2. In another browser, private window, independently opened tab, or device, open the frontend and enter the code, display name, and team name. Click **Join room**.
-3. The host's connected-player list updates automatically. Custom team names are supported, and both sides receive lobby information.
-4. The host can **Close joining** or **Reopen joining**, a real server-authorized operation. Existing members can reconnect while new joins are closed.
-5. Refresh either dashboard: the saved tab session restores its room without adding another player. Display names are not credentials; distinct guests may use the same name.
+1. Click **Host a Game** and share the room code. An existing host session resumes its room.
+2. Students join from independently opened browsers/tabs/devices with their display name and a **team preference**. New players remain **Unassigned** until the host assigns them. Preferences never grant authority to change teams.
+3. In **Teams & players**, create/rename teams and choose the assigned team for each player. New rooms include Blue and Gold as starter teams. Existing Phase II/III team assignments are migrated without discarding players or rooms.
+4. **Open buzzers** opens the first question, or reopens the current question after a pause/reset. Players tap/click BUZZ or press Space outside form controls. The first valid request accepted by PostgreSQL wins. No points are awarded automatically.
+5. The scoring team defaults to the accepted winner's team. Choose a different team to override it. Use the configurable +10 / +5 / −5 defaults or a custom positive/negative adjustment. The live leaderboard sorts highest score first and shows competition-style ties: T1, T1, #3.
+6. **Next question** completes the current question, advances its number, and atomically opens a fresh buzzer identifier. **Next round** completes the current question, advances the competition round, and opens question 1.
+7. **End match** asks for confirmation, finishes the open question, freezes ranked final scores, records the server completion time, closes new joins, and disables buzzing/scoring/team changes. Existing members can reconnect to the summary.
+8. Use **Return to dashboard** / **View summary**, or **Start new match**. A new match resets scores to zero and counters to round 1 / no open question, retains teams and player assignments, and reopens joining. Previous final results remain available under **Previous match results** (ten most recent summaries in the UI; older rows remain in the database).
 
-Guest JWTs, refresh tokens, the active room, and the random 256-bit host credential use **sessionStorage**. Auth storage/channel keys are distinct per tab so independent tabs do not overwrite each other's guest tokens. Refresh preserves identity. The most recent host credential is retained separately if that tab temporarily joins as a player; Host a Game restores it after server verification. Closing the browser session, clearing its storage, or moving to another device requires a new identity. Browsers may clone session storage when duplicating a tab; use an independently opened tab or private browser for a distinct participant. Host credentials are never placed in room codes, URLs, localStorage, or player records. Losing the original host session does not confer host access to someone with the room code.
+Empty teams can be removed only if they have no assigned players and zero points. Removal archives the team rather than erasing references. A team with points remains in the standings until the match is finished. Scores may be negative. Each adjustment must be a nonzero integer from −10,000 to +10,000; total team scores are bounded to ±1 billion. These are configurable club shortcuts, not an official ruleset.
 
-## Online status and recovery
+## Counters and buzzer semantics
 
-- The active participant sends a server-authorized heartbeat every **20 seconds**. PostgreSQL supplies its timestamp; clients use the server clock offset when displaying status.
-- A participant is online while its last heartbeat is younger than **75 seconds**. Offline player records are retained. A reliable unload/close event is not required.
-- Returning to a sleeping mobile tab or reconnecting updates the same player's heartbeat. Background tabs may appear offline when the browser suspends their timers.
-- Supabase Postgres Changes provides immediate roster and lobby notifications. The client waits for the actual database subscription to be ready before marking it connected, then fetches a fresh snapshot to repair the initial event gap.
-- Periodic snapshots repair missed events while the websocket reconnects. Returning online, returning to a tab, and **Retry connection** trigger recovery. Live host changes and buzz submissions are disabled while disconnected. After subscription recovery, a new authoritative snapshot must complete before buzzing is enabled.
-- The database uniqueness constraint on `(room_id, user_id)` makes simultaneous/retried joins idempotent. A saved creation request ID and transactional advisory lock make a lost room-creation response safe to retry.
+Competition round/question numbers are separate from Phase III's internal buzzer cycle. Every reopen, reset, question advance, match end, or new match invalidates old buzzer requests with a fresh UUID as appropriate. The monotonic buzzer revision never resets.
 
-## Authorization
+| Control | Competition counters | Buzzer |
+| --- | --- | --- |
+| New room / new match | Round 1, question 0, completed 0 | Paused, new identifier, no winner |
+| Open buzzers | If question is 0, set it to 1; otherwise preserve it | New identifier, clear winner, ready |
+| Pause | Preserve counters | Preserve identifier; ready → paused; locked results remain locked |
+| Reset buzzers | Preserve the current question (or open question 1) | New identifier, clear winner, ready |
+| Next question | Complete an open question and increment its number | New identifier, clear winner, ready |
+| Next round | Complete an open question; increment round; question becomes 1 | New identifier, clear winner, ready |
+| End match | Count the open question once as completed | Invalidate identifier; no further buzzing; retain an accepted result if present |
 
-The browser sends a publishable/anon key and its signed guest JWT. RLS limits room and roster reads to members and the owning host. Direct client inserts, updates, and deletes are revoked. Writes go through narrowly scoped PostgreSQL RPC functions with empty `search_path`, fully qualified relations, input validation, and explicit execute grants.
+“Questions completed” means questions the host has moved past or finished by ending the match. Reopening/resetting the same question does not count it again. There is no automatic answer grading or question bank. Starting with Next Question when no question is open starts question 1 without counting a phantom completed question.
 
-Host-only writes verify **both** `auth.uid()` and the SHA-256 hash of a random host credential in `quiz_private.host_credentials`. Ordinary players cannot change room permissions with the public code, even if they copy a host request. Private credential tables have RLS and no client table permissions. Definer helper functions cannot be called directly except the boolean membership predicate required by RLS. No service-role or privileged key is used or embedded. Vite refuses to build if a privileged or invalid key is supplied as the frontend Supabase key.
+“First” means the first valid attempt serialized and accepted by PostgreSQL, not the first physical press across different network connections. The Phase III arbitration functions are retained unchanged behind restricted wrappers. Membership is derived from `auth.uid()`, not a client-provided player ID. Winning names/team IDs are captured at acceptance; reassigning a player later cannot rewrite that accepted result. The host may override the scoring team.
 
-Guest identity and room membership are the only authentication mechanisms introduced in this phase. Rooms, players, and guest Auth records persist until administrator cleanup; the frontend has no deletion API. Supabase Auth limits apply to guest creation. Production operators can configure additional abuse protection and retention for the club's usage.
+## Security and consistency
 
-## Live buzzer semantics
+- Existing signed guest sessions and 256-bit host credentials are reused. Host operations check both the owning `auth.uid()` and the hashed host credential. Room codes are never authorization.
+- All protected tables have RLS. Clients receive member-scoped SELECT only. Direct team, score, match, assignment, or buzzer writes are denied, including direct writes from the host's browser.
+- Team names are unique within a room (case-insensitive, trimmed). IDs are checked against the current room, so a team/player from another room cannot be substituted.
+- `manage_quiz_competition` validates names, integer adjustments, score limits, match identity, lifecycle, and action payloads. Narrow RPC grants and empty `search_path` are used; implementation functions and request receipts remain private.
+- Compound operations use the same buzzer-row lock before modifying matches, teams, or players. Score/end/new-match operations cannot interleave partially with a buzz or question reset.
+- Each competition action has a browser-persisted UUID request ID. The private server receipt rejects changed payloads and returns the current snapshot for an exact replay. A lost response or double submission cannot apply the same adjustment twice.
+- While an action is unconfirmed, the interface retains its request and offers **Retry saved action**. New host mutations wait until that action is resolved. Retrying after a page reload or even a new match uses the original match/request IDs; old points cannot leak into the new match.
+- Question advances also carry the buzzer identifier the host was viewing. Two concurrent host advances from the same question cannot skip two questions. Stale match requests cannot affect a new match.
+- Final standings freeze team names, ranks, and points in an ended match row. Renaming/removing teams or resetting current scores later leaves those results intact. Past matches are read-only through the client API.
 
-Open the host dashboard and click **Start round**. Players can tap/click BUZZ or press Space outside form controls. The button immediately displays **Buzzing** and blocks repeat submissions until confirmation. The winning player sees **YOU BUZZED FIRST!**; other players see **LOCKED OUT — [name] buzzed first.** All dashboards display the same accepted name and team. Repeated keyboard keydown events are ignored, and form fields/buttons retain their normal keyboard behavior.
+## Realtime and recovery
 
-| Action | Server behavior |
-| --- | --- |
-| New room | Paused, round number 0, no winner. |
-| Start round | New UUID round identifier, increment round number, clear winner, status `ready`. Buzzing is enabled. |
-| Pause | Preserve UUID and round number; change `ready` to `paused`. Buzzing is disabled. A locked result cannot be paused or erased. |
-| Reset buzzers / Next question | Same new-round semantics as Start: new UUID, increment round number, clear winner, status `ready`. Scores are untouched. |
-| Start after pause | Opens a **new** round; it does not reuse/resume the paused UUID. |
-| Accepted buzz | Preserve round identifier; status `locked`, record one winning player and server timestamp. |
+The existing single room subscription listens to buzzer, roster, lobby, and competition changes. Critical buzzer events are applied immediately. A competition revision notification fetches one authorized snapshot containing the match, teams, assignments, history, and buzzer so a new match cannot be displayed with the old match's scores. Server revisions prevent older HTTP/RPC responses from restoring stale scores, assignments, or winners. Notifications already covered by an RPC response are ignored. No separate scoreboard polling loop or duplicate subscription is added.
 
-`public.quiz_buzzer` has one row per room and is separate from heartbeat/lobby writes. `submit_quiz_buzz` derives the participant from the signed `auth.uid()`, checks room membership, and locks the buzzer row with `SELECT ... FOR UPDATE`. While holding that lock it verifies the submitted round identifier and current status. Only an eligible `ready` row becomes `locked`. Later attempts return `accepted: false` with `duplicate`, `locked`, `paused`, or `stale_round`, together with the authoritative state. No player ID, winner name, or browser timestamp is accepted as input.
+The existing 20-second heartbeat and recovery snapshot remain; online status expires after 75 seconds without a server-timestamped heartbeat. Offline player records and assigned teams are retained. Returning online, returning to the tab, retrying, or refreshing retrieves authoritative state. Buzzing stays disabled during reconnection/competition synchronization. Mobile background suspension may temporarily show a player offline.
 
-**First means the first valid buzz serialized and accepted by PostgreSQL.** It does not determine which physical button was pressed earliest across different network connections. `winning_at` comes from PostgreSQL's `clock_timestamp()` after acquiring the row lock; timestamps do not choose the winner. The accepted name/team are frozen so a player renaming themselves cannot rewrite the result.
-
-`control_quiz_buzzer` uses the existing host credential plus signed host identity and locks the same row. Every host request includes the round the host was viewing. A delayed buzz from a previous round cannot win after reset; a duplicate host reset cannot accidentally advance two rounds. Direct inserts/updates/deletes on the buzzer table are denied to clients, including the host. Only its restricted RPCs can change protected state.
-
-Realtime buzzer events are applied immediately through the existing single room subscription, without the roster's debounce. A monotonic server revision prevents an old HTTP snapshot, delayed RPC result, or out-of-order event from overwriting a newer round/winner. Reconnection reads the full authoritative snapshot, so missing a websocket event does not strand a client in an old round. A failed/unconfirmed buzz is not automatically resubmitted and never produces an optimistic winner display.
-
-## Scoring preview
-
-Only the scoreboard's labeled LOCAL controls remain in memory. They are never sent to Supabase, reset on refresh, and are independent of live buzzer reset. Host-side simulated-player buzzes and player-side simulated-moderator controls have been removed. No synchronized scoring or tournament features are included.
+Guest tokens, host credentials, active room, and unconfirmed actions use sessionStorage. A distinct auth storage/channel key isolates independently opened tabs. Refresh preserves identity; closing/clearing a browser session or moving to another device requires a new identity. Some browsers clone session storage when duplicating a tab, so use independently opened tabs/private windows for separate participants. Credentials never appear in room codes, URLs, player records, or localStorage.
 
 ## Architecture
 
 | File | Responsibility |
 | --- | --- |
-| `src/App.tsx` | Existing homepage, navigation, host/player views; consumes live rooms/buzzers and local score preview. |
-| `src/components/HostBuzzer.tsx` | Existing-layout host buzzer card with authenticated controls. |
-| `src/components/PlayerBuzzer.tsx` | Existing-layout player buzzer, pending/result states, mobile click and keyboard support. |
-| `src/lib/supabase.ts` | Validated public configuration, one Supabase client, per-tab guest sessions, timeouts. |
-| `src/rooms/api.ts` | Typed room RPC adapter and user-facing error mapping. |
-| `src/rooms/useRoom.ts` | One room subscription, snapshots, heartbeats, recovery, buzz/control request guards. |
-| `src/rooms/state.ts` | Revision-aware reconciliation of RPC, snapshot, and Realtime state. |
-| `src/rooms/storage.ts` | Session persistence and idempotent creation credentials. |
-| `src/rooms/types.ts` | Live room/player types and liveness timing. |
-| `src/demo.ts` | Local score preview only; no buzzer arbitration or backend writes. |
-| `supabase/migrations/202610270001_quiz_rooms.sql` | PostgreSQL schema, authorization, operations, Realtime publication. |
-| `supabase/migrations/202610270002_quiz_buzzer.sql` | Buzzer state, atomic arbitration, authorized round controls, snapshot extension, RLS/publication. |
+| `src/App.tsx` | Existing routes, navigation, branding, and host/player view composition |
+| `src/components/Competition.tsx` | Host team management, live scoreboard, match controls, summaries/history |
+| `src/components/HostBuzzer.tsx` | Existing buzzer card with live question integration |
+| `src/components/PlayerBuzzer.tsx` | Mobile/click/Space buzzer, pending/winner/lockout/ended states |
+| `src/rooms/useRoom.ts` | One subscription, recovery, request guards, idempotent competition actions |
+| `src/rooms/api.ts` | Typed public RPC adapter and understandable errors |
+| `src/rooms/state.ts` | Revision-aware buzzer and competition reconciliation |
+| `src/rooms/leaderboard.ts` | Read-only ranking with correct ties |
+| `src/rooms/storage.ts` | Session credentials and unconfirmed request persistence |
+| `supabase/migrations/202610270003_competition.sql` | Teams, matches, revisions, request receipts, RLS, restricted operations, backfill |
+
+The local scoring reducer has been removed. All displayed team scores come from Supabase. No new framework, service-role key, tournament feature, or deployment integration was introduced.
 
 ## Verification
 
 ```sh
-npm run build
 npm test
 npm run test:database
 npm run test:integration
-npm run test:integration -- --presence
+npm run build
 ```
 
-`npm test` checks client reconciliation: an old HTTP response cannot erase a Realtime winner, a delayed winning response cannot overwrite a new round, a new round unlocks correctly, and events from a different room are ignored.
+`npm test` verifies stale-response protection for buzzer/competition state and leaderboard ordering/ties, including negative scores.
 
-`test:database` starts a disposable PostgreSQL cluster under `.test-db/`, executes both actual migrations with Supabase Auth roles/claims bootstrapped, and runs the existing Phase II tests plus buzzer arbitration/security tests. It tests one buzz; two and eight concurrent contenders; duplicate, paused, locked, and stale attempts; host reset/pause/start semantics; direct-write/impersonation/outsider/unauthorized-host denial; and reconnecting to the same result. Contention tests use **separate PostgreSQL connections** and hold the row until every contender is actually waiting on a database lock. A deterministic reset-before-delayed-buzz test verifies that a request already waiting at reset time cannot win the new round. The cluster is stopped and removed. This development-only runtime does not substitute for testing Supabase Realtime.
+`test:database` starts an isolated PostgreSQL cluster under `.test-db/`. It runs Phase II/III tests, applies Phase IV to those populated rooms, tests team management and assignment retention, positive/negative/custom scoring, validation, same-request retries, concurrent host scoring/advances, stale buzzes, match end/reset, frozen tied results, history, RLS and authorization, and then reruns the Phase III contention/reconnection tests after the upgrade. Contention uses separate connections and real row-lock waits. The test stops/removes only its verified temporary cluster.
 
-`test:integration` uses the configured Supabase project and public key. It runs the Phase II room checks, then verifies live buzzing with two and three concurrent independent player sessions. It confirms exactly one accepted attempt and **actual Realtime winner/reset delivery to the host and every player**, authorization, stale/paused/duplicate rejections, and restoration of an existing player's session without adding a player. `--presence` also runs the Phase II 80-second heartbeat expiry check. Test rooms close to new joins and sessions sign out afterward. Room/player/Auth records remain for inspection; cleanup is an administrator task.
+`test:integration` uses the configured Supabase public key and independent guest sessions. It tests actual Realtime delivery for rooms, buzzes, team assignments, scores, counters, match state, and final results; unauthorized requests; score retries; stale questions; new-match resets; and restored player identity/teams/history. The optional `--presence` flag retains the Phase II 80-second heartbeat-expiry test. Test rooms close to joining afterward; database/Auth test records remain for administrator inspection/cleanup.
 
-Manual browser check: open an independent host and two players, create/join a room, Start, and click BUZZ. Confirm the same name/team on host and both players. Next question must clear results and enable both buzzers. Pause must disable them without changing the displayed round. Start opens another round. Test Space, reload the winner/locked-out dashboards, and inspect phone widths. Do not infer successful Realtime solely from polling updates.
+Browser verification covers host team create/rename/archive, assignment, mouse buzzing, scoring-team override, positive/negative/custom adjustments, shortcut configuration, counters, tied summary, new match, reconnect, and phone layout. Automated checks and live tests must be rerun after relevant changes; a successful polling snapshot alone does not prove Realtime delivery.
 
-References: [guest sessions](https://supabase.com/docs/guides/auth/auth-anonymous), [database functions](https://supabase.com/docs/guides/database/functions), [RLS](https://supabase.com/docs/guides/database/postgres/row-level-security), [Postgres Changes](https://supabase.com/docs/guides/realtime/postgres-changes).
+References: [Supabase database functions](https://supabase.com/docs/guides/database/functions), [RLS](https://supabase.com/docs/guides/database/postgres/row-level-security), [Postgres Changes](https://supabase.com/docs/guides/realtime/postgres-changes), [PostgreSQL row locks](https://www.postgresql.org/docs/17/explicit-locking.html).

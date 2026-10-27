@@ -9,19 +9,34 @@ import {
   Trophy,
   Zap,
 } from "lucide-react";
-import type { BuzzerAction, BuzzerState, Connection } from "../rooms/types";
+import type {
+  BuzzerAction,
+  BuzzerState,
+  Connection,
+  MatchState,
+} from "../rooms/types";
 
 type Props = {
   state: BuzzerState | null;
   connection: Connection;
   busy: boolean;
   onControl: (action: BuzzerAction) => Promise<boolean>;
+  match: MatchState | null;
+  onNextQuestion: () => Promise<boolean>;
 };
-export function HostBuzzer({ state, connection, busy, onControl }: Props) {
+export function HostBuzzer({
+  state,
+  connection,
+  busy,
+  onControl,
+  match,
+  onNextQuestion,
+}: Props) {
   const [confirmReset, setConfirmReset] = useState(false);
   const locked = state?.status === "locked";
   const ready = state?.status === "ready";
-  const disabled = !state || connection !== "connected" || busy;
+  const disabled =
+    !state || connection !== "connected" || busy || match?.status !== "active";
   return (
     <section className="card round-card">
       <div className="card-heading">
@@ -32,7 +47,13 @@ export function HostBuzzer({ state, connection, busy, onControl }: Props) {
         <span
           className={`status-pill ${ready ? "green" : locked ? "gold-pill" : ""}`}
         >
-          {locked ? "Locked" : ready ? "Ready · buzzers open" : "Paused"}
+          {match?.status === "ended"
+            ? "Match ended"
+            : locked
+              ? "Locked"
+              : ready
+                ? "Ready · buzzers open"
+                : "Paused"}
         </span>
       </div>
       <div
@@ -40,7 +61,8 @@ export function HostBuzzer({ state, connection, busy, onControl }: Props) {
         aria-live="polite"
       >
         <span className="round-label">
-          ROUND {String(state?.round_number ?? 0).padStart(2, "0")}
+          ROUND {match?.round_number ?? 1} · QUESTION{" "}
+          {match?.question_number || "—"}
         </span>
         <span className="status-icon">
           {locked ? (
@@ -52,20 +74,24 @@ export function HostBuzzer({ state, connection, busy, onControl }: Props) {
           )}
         </span>
         <h3>
-          {locked
-            ? `${state.winning_name} — ${state.winning_team} buzzed first.`
-            : ready
-              ? "The floor is open."
-              : "Ready for the next question?"}
+          {match?.status === "ended"
+            ? "Match complete."
+            : locked
+              ? `${state.winning_name} — ${state.winning_team} buzzed first.`
+              : ready
+                ? "The floor is open."
+                : "Ready for the next question?"}
         </h3>
         <p>
-          {!state
-            ? "Apply the Phase III migration to enable live buzzers."
-            : locked
-              ? "This is the first valid buzz accepted by the server."
-              : ready
-                ? "Buzzers are open for every player in this room."
-                : "Buzzers are paused. Start a new round when everyone is ready."}
+          {match?.status === "ended"
+            ? "Final scores are preserved. Start a new match to play again."
+            : !state
+              ? "Apply the Phase III migration to enable live buzzers."
+              : locked
+                ? "This is the first valid buzz accepted by the server."
+                : ready
+                  ? "Buzzers are open for every player in this room."
+                  : "Buzzers are paused. Open them when everyone is ready."}
         </p>
         {locked && (
           <span className="first-badge">
@@ -81,7 +107,7 @@ export function HostBuzzer({ state, connection, busy, onControl }: Props) {
           onClick={() => void onControl("start")}
         >
           <Play size={17} />
-          Start round
+          Open buzzers
         </button>
         <button
           className="button secondary"
@@ -94,7 +120,7 @@ export function HostBuzzer({ state, connection, busy, onControl }: Props) {
         <button
           className="button secondary"
           disabled={disabled}
-          onClick={() => void onControl("reset")}
+          onClick={() => void onNextQuestion()}
         >
           <ArrowRight size={17} />
           Next question
@@ -111,7 +137,7 @@ export function HostBuzzer({ state, connection, busy, onControl }: Props) {
       </div>
       {confirmReset && (
         <div className="confirm-reset">
-          <span>Clear the winner and open a new round?</span>
+          <span>Clear the winner and reopen this question?</span>
           <button
             className="text-button"
             disabled={disabled}
@@ -130,8 +156,8 @@ export function HostBuzzer({ state, connection, busy, onControl }: Props) {
         </div>
       )}
       <div className="card-note">
-        Start, next question, and reset open a new round. Pause preserves the
-        current round.
+        Open/reset reopens this question. Next question advances numbering and
+        clears the buzzer.
       </div>
     </section>
   );

@@ -6,6 +6,7 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { loadEnv } from "vite";
 import { createClient } from "@supabase/supabase-js";
 import { testBuzzerSupabase } from "./test-buzzer-supabase.mjs";
+import { testCompetitionSupabase } from "./test-competition-supabase.mjs";
 
 const env = { ...loadEnv("development", ".", "VITE_"), ...process.env };
 const url = env.VITE_SUPABASE_URL;
@@ -170,7 +171,23 @@ try {
     p_host_token: token,
   });
   assert.equal(state.players.length, 1);
-  assert.equal(state.players[0].team_name, "Science Team");
+  assert.equal(
+    state.players[0].team_name,
+    state.competition ? "Unassigned" : "Science Team",
+  );
+  if (state.competition) {
+    state = await rpc(host, "manage_quiz_competition", {
+      p_room_id: room.id,
+      p_host_token: token,
+      p_match_id: state.match.id,
+      p_request_id: randomUUID(),
+      p_action: "assign_player",
+      p_payload: {
+        player_id: first.player.id,
+        team_id: state.teams.find((t) => t.name === "Blue").id,
+      },
+    });
+  }
   console.log(
     "PASS concurrent duplicate joins create one player; host receives Realtime join event",
   );
@@ -272,7 +289,21 @@ try {
       return client;
     },
   });
-  console.log("Live Supabase room and buzzer integration checks passed.");
+  await testCompetitionSupabase({
+    host,
+    player,
+    outsider,
+    room,
+    token,
+    makeClient: () => {
+      const client = independentClient();
+      clients.push(client);
+      return client;
+    },
+  });
+  console.log(
+    "Live Supabase room, buzzer, and competition integration checks passed.",
+  );
 } finally {
   if (room)
     await host.rpc("set_quiz_room_joining", {

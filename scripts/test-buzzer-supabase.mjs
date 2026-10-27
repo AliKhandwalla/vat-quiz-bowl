@@ -159,6 +159,24 @@ export async function testBuzzerSupabase({
       p_team: "Blue",
     });
     eventLists.push(await subscribe(outsider), await subscribe(third));
+    const assignments = await snapshot(host);
+    if (assignments.competition) {
+      for (const p of assignments.players)
+        await rpc(host, "manage_quiz_competition", {
+          p_room_id: room.id,
+          p_host_token: token,
+          p_match_id: assignments.match.id,
+          p_request_id: crypto.randomUUID(),
+          p_action: "assign_player",
+          p_payload: {
+            player_id: p.id,
+            team_id: assignments.teams.find(
+              (t) =>
+                t.name === (p.requested_team_name === "Gold" ? "Gold" : "Blue"),
+            ).id,
+          },
+        });
+    }
 
     for (const contenders of [
       [player, outsider],

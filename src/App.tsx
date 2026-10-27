@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowDown,
   ArrowRight,
@@ -11,9 +11,7 @@ import {
   GraduationCap,
   Home,
   LogIn,
-  Minus,
   Monitor,
-  Plus,
   RotateCcw,
   ShieldCheck,
   Sparkles,
@@ -23,7 +21,13 @@ import {
   Zap,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
-import { gameReducer, initialGame } from "./demo";
+import {
+  Scoreboard,
+  TeamManager,
+  MatchControls,
+  MatchSummary,
+  MatchHistory,
+} from "./components/Competition";
 import { useRoom } from "./rooms/useRoom";
 import { isOnline } from "./rooms/types";
 import { HostBuzzer } from "./components/HostBuzzer";
@@ -47,7 +51,7 @@ const Icon = ({
 export default function App() {
   const [page, setPage] = useState<Page>(pageFromHash);
   const live = useRoom();
-  const [game, dispatch] = useReducer(gameReducer, initialGame);
+  const [dismissedSummary, setDismissedSummary] = useState<string | null>(null);
   const [room, setRoom] = useState("");
   const [name, setName] = useState("");
   const [team, setTeam] = useState("Blue");
@@ -83,8 +87,23 @@ export default function App() {
       })) ?? [],
     [live.snapshot?.players],
   );
-  const teams = Array.from(new Set(players.map((p) => p.team)));
-  const scoreTeams = teams.length ? teams : ["Blue", "Gold"];
+  const teams = live.snapshot?.teams ?? [];
+  const match = live.snapshot?.match ?? null;
+  const active = match?.status === "active";
+  const mutationDisabled =
+    live.busy ||
+    !!live.pendingRequest ||
+    live.competitionSyncing ||
+    live.connection !== "connected" ||
+    !live.snapshot?.competition;
+  const winnerTeamId =
+    live.snapshot?.buzzer?.winning_team_id ??
+    live.snapshot?.players.find(
+      (p) => p.id === live.snapshot?.buzzer?.winning_player_id,
+    )?.team_id;
+  const shortcuts = live.snapshot?.competition?.scoring_shortcuts ?? [
+    10, 5, -5,
+  ];
   const playerName = ownPlayer?.display_name ?? name;
   const playerTeam = ownPlayer?.team_name ?? team;
   const buzzer = live.snapshot?.buzzer ?? null;
@@ -96,9 +115,6 @@ export default function App() {
           team: buzzer.winning_team,
         }
       : null;
-  useEffect(() => {
-    dispatch({ type: "reset" });
-  }, [live.session?.roomId]);
   async function copyCode() {
     try {
       await navigator.clipboard.writeText(roomCode);
@@ -214,11 +230,11 @@ export default function App() {
               <strong>Live rooms. Familiar competition.</strong>
               <span className="banner-detail">
                 {" "}
-                Live rooms and buzzers. Scores remain a local preview.
+                Live teams, scores, questions, and buzzers.
               </span>
             </span>
             <span className="phase-label">
-              PHASE 03 <span>REALTIME BUZZERS</span>
+              PHASE 04 <span>COMPETITION MANAGEMENT</span>
             </span>
           </div>
           {(live.configurationError || live.error || error) && (
@@ -235,6 +251,46 @@ export default function App() {
               )}
             </section>
           )}
+          {live.snapshot && !live.snapshot.competition && (
+            <section className="connection-notice" role="alert">
+              Competition controls require the Phase IV migration:
+              supabase/migrations/202610270003_competition.sql. Apply it in
+              Supabase SQL Editor and retry.
+            </section>
+          )}
+          {live.session?.role === "host" &&
+            live.pendingRequest &&
+            !live.busy && (
+              <section className="connection-notice" role="status">
+                <span>
+                  {live.busy ? "Saving" : "Confirm saved action"}:{" "}
+                  {live.pendingRequest.action.replaceAll("_", " ")}. A retry
+                  will not count it twice.
+                </span>
+                <button
+                  className="button secondary small"
+                  disabled={live.busy || live.connection !== "connected"}
+                  onClick={() => void live.retryCompetition()}
+                >
+                  Retry saved action
+                </button>
+              </section>
+            )}
+          {page !== "home" &&
+            match?.status === "ended" &&
+            dismissedSummary !== match.id &&
+            (live.snapshot?.is_host || joined) && (
+              <MatchSummary
+                match={match}
+                disabled={mutationDisabled}
+                onDismiss={() => setDismissedSummary(match.id)}
+                onNewMatch={
+                  live.snapshot?.is_host
+                    ? () => void live.mutate("new_match")
+                    : undefined
+                }
+              />
+            )}
           {live.snapshot && !buzzer && (
             <section className="connection-notice" role="alert">
               Live buzzers require the Phase III migration. Apply
@@ -276,12 +332,13 @@ export default function App() {
               <div>
                 <strong>From question to quick thinking.</strong>
                 <p>
-                  Create a room and share its code. Students join with their
-                  name and team. Start opens a new round; Pause disables
-                  buzzing. Next question and Reset clear the winner and open a
-                  new round. The first valid buzz accepted by the server wins
-                  and locks everyone else out. Scores remain local previews.
-                  Refreshing restores authoritative room and buzzer state.
+                  Create a room and share its code. Assign players to teams,
+                  open a question, and judge each answer before adding or
+                  deducting points. Next Question advances the question and
+                  safely resets buzzers. Next Round starts question 1 of a new
+                  competition round. End Match freezes the standings; Start New
+                  Match resets scores and counters while retaining teams and
+                  players.
                 </p>
               </div>
               <button className="text-button" onClick={() => setHelp(false)}>
@@ -453,7 +510,7 @@ export default function App() {
                           />
                         </label>
                         <label>
-                          Team name
+                          Team preference
                           <input
                             value={team}
                             onChange={(e) => setTeam(e.target.value)}
@@ -466,7 +523,7 @@ export default function App() {
                       </div>
                       <div className="join-footer">
                         <small id="join-hint">
-                          Use the code shared by your host.
+                          Team assignments are made by your host.
                         </small>
                         <button
                           type="submit"
@@ -588,7 +645,7 @@ export default function App() {
                 </span>
                 <button
                   className="button secondary"
-                  disabled={live.busy || live.connection !== "connected"}
+                  disabled={mutationDisabled || !active}
                   onClick={() =>
                     void live.setJoining(!live.snapshot!.room.accepting_players)
                   }
@@ -598,144 +655,50 @@ export default function App() {
                     : "Reopen joining"}
                 </button>
               </section>
+              {match && (
+                <MatchControls
+                  match={match}
+                  disabled={mutationDisabled}
+                  onAction={live.mutate}
+                  onSummary={() => setDismissedSummary(null)}
+                />
+              )}
               <div className="dashboard-grid">
                 <div className="dashboard-main">
                   <HostBuzzer
                     state={buzzer}
                     connection={live.connection}
-                    busy={live.busy}
+                    busy={mutationDisabled || !active}
+                    match={match}
+                    onNextQuestion={() => live.mutate("next_question")}
                     onControl={live.control}
                   />
-                  <section className="card">
-                    <div className="card-heading">
-                      <h2>
-                        <Icon icon={Users} /> Connected players
-                      </h2>
-                      <span className="count-label">
-                        {
-                          players.filter((p) =>
-                            isOnline(p.lastSeen, live.serverNow),
-                          ).length
-                        }{" "}
-                        online · {players.length} total
-                      </span>
-                    </div>
-                    <div className="player-list">
-                      {!players.length && (
-                        <p className="empty-roster">
-                          No players yet. Share your room code to get started.
-                        </p>
-                      )}
-                      {players.map((player, i) => (
-                        <div
-                          className={`player-row ${player.id === winner?.id ? "winner-row" : ""}`}
-                          key={player.id}
-                        >
-                          <span
-                            className={`player-avatar ${player.team.toLowerCase() === "gold" ? "gold" : "blue"}`}
-                          >
-                            {player.name
-                              .split(" ")
-                              .map((n) => n[0])
-                              .slice(0, 2)
-                              .join("")}
-                          </span>
-                          <span className="player-info">
-                            <strong>
-                              {player.name}
-                              {player.id === selfId ? " (you)" : ""}
-                            </strong>
-                            <small>Team {player.team}</small>
-                          </span>
-                          {player.id === winner?.id ? (
-                            <span className="first-text">
-                              <Zap size={14} /> First buzz
-                            </span>
-                          ) : (
-                            <span
-                              className={`player-ready live-presence ${isOnline(player.lastSeen, live.serverNow) ? "online" : "offline"}`}
-                            >
-                              <span />
-                              {isOnline(player.lastSeen, live.serverNow)
-                                ? "Online"
-                                : "Offline"}
-                            </span>
-                          )}
-
-                          <span className="player-number">
-                            {String(i + 1).padStart(2, "0")}
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                    <div className="card-note">
-                      <Sparkles size={14} /> Live roster · offline players are
-                      retained. Winner results synchronize across this room.
-                    </div>
-                  </section>
+                  <TeamManager
+                    teams={teams}
+                    players={live.snapshot.players}
+                    serverNow={live.serverNow}
+                    disabled={mutationDisabled || !active}
+                    onAction={live.mutate}
+                  />
                 </div>
                 <aside className="dashboard-side">
-                  <section className="card scoreboard">
-                    <div className="card-heading">
-                      <h2>
-                        <Icon icon={Trophy} /> Scoreboard{" "}
-                        <span className="local-badge">LOCAL</span>
-                      </h2>
-                    </div>
-                    {scoreTeams.map((t) => (
-                      <div
-                        className={`score-team ${t.toLowerCase() === "gold" ? "gold" : "blue"}`}
-                        key={t}
-                      >
-                        <div className="score-team-name">
-                          <span className="team-dot" />
-                          Team {t}
-                          <span>
-                            {players.filter((p) => p.team === t).length} players
-                          </span>
-                        </div>
-                        <div className="score-number">
-                          {game.scores[t] ?? 0}
-                          <small>POINTS</small>
-                        </div>
-                        <div className="score-buttons">
-                          <button
-                            aria-label={`Subtract 5 points from Team ${t}`}
-                            onClick={() =>
-                              dispatch({ type: "score", team: t, points: -5 })
-                            }
-                          >
-                            <Minus size={14} />5
-                          </button>
-                          <button
-                            onClick={() =>
-                              dispatch({ type: "score", team: t, points: 10 })
-                            }
-                          >
-                            <Plus size={14} />
-                            10 pts
-                          </button>
-                          <button
-                            onClick={() =>
-                              dispatch({ type: "score", team: t, points: 5 })
-                            }
-                          >
-                            <Plus size={14} />5 pts
-                          </button>
-                        </div>
-                      </div>
-                    ))}
-                    <div className="card-note">
-                      Local score demo · scores do not sync to other devices
-                    </div>
-                  </section>
+                  <Scoreboard
+                    teams={teams}
+                    players={live.snapshot.players}
+                    shortcuts={shortcuts}
+                    winnerTeamId={winnerTeamId}
+                    winnerName={winner?.name}
+                    responseKey={`${match?.id}:${buzzer?.round_id}:${winner?.id}`}
+                    disabled={mutationDisabled || !active}
+                    onAction={live.mutate}
+                  />
                   <div className="tip-card">
                     <Icon icon={Volume2} />
                     <h3>Read. Pause. Reveal.</h3>
                     <p>
-                      Buzzers and round controls are live. The server accepts
-                      one valid winner per round. Scores remain a local preview
-                      until a later phase.
+                      A buzz identifies the first accepted response. The host
+                      judges the answer and chooses the team and score
+                      adjustment. Nothing is awarded automatically.
                     </p>
                   </div>
                 </aside>
@@ -759,6 +722,13 @@ export default function App() {
                   Room {roomCode}
                 </span>
               </div>
+              {joined && match?.status === "ended" && (
+                <MatchControls
+                  match={match}
+                  disabled={mutationDisabled}
+                  onSummary={() => setDismissedSummary(null)}
+                />
+              )}
               {!joined ? (
                 <section className="card player-join">
                   <span className="square-icon blue">
@@ -794,26 +764,17 @@ export default function App() {
                     connection={live.connection}
                     buzzing={live.buzzing}
                     error={live.buzzError}
+                    match={match}
+                    syncing={live.competitionSyncing}
                     onBuzz={live.buzz}
                   />
                   <aside>
-                    <section className="card player-summary">
-                      <h2>
-                        <Trophy size={20} /> Local score preview
-                      </h2>
-                      {scoreTeams.map((t) => (
-                        <div key={t}>
-                          <span>
-                            <span
-                              className={`team-dot ${t.toLowerCase() === "gold" ? "gold" : "blue"}`}
-                            />
-                            Team {t}
-                            {playerTeam === t && <small>YOU</small>}
-                          </span>
-                          <strong>{game.scores[t] ?? 0}</strong>
-                        </div>
-                      ))}
-                    </section>
+                    <Scoreboard
+                      teams={teams}
+                      players={live.snapshot!.players}
+                      shortcuts={shortcuts}
+                      disabled={true}
+                    />
                     <section className="tip-card live-room-help">
                       <span className="eyebrow muted">
                         <Zap size={13} /> LIVE BUZZER
@@ -821,7 +782,7 @@ export default function App() {
                       <h3>Listen. Think. Buzz.</h3>
                       <p>
                         One winner is accepted by the server. The host opens a
-                        new round to unlock every buzzer. Network arrival order
+                        question to unlock every buzzer. Network arrival order
                         can differ from physical press order.
                       </p>
                       <button
@@ -837,6 +798,13 @@ export default function App() {
             </>
           )}
 
+          {page !== "home" && (live.snapshot?.is_host || joined) && (
+            <MatchHistory
+              matches={(live.snapshot?.history || []).filter(
+                (m) => m.id !== match?.id,
+              )}
+            />
+          )}
           <footer>
             <span>
               <GraduationCap size={17} /> VAT Quiz Bowl{" "}

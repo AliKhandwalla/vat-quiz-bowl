@@ -8,6 +8,7 @@ import { resolve, join } from "node:path";
 import { createServer } from "node:net";
 import EmbeddedPostgres from "embedded-postgres";
 import { testBuzzerDatabase } from "./test-buzzer-database.mjs";
+import { testCompetitionDatabase } from './test-competition-database.mjs';
 
 const testRoot = resolve(".test-db");
 await mkdir(testRoot, { recursive: true });
@@ -242,6 +243,10 @@ try {
   console.log(
     "PASS host joining controls, retained offline records, reconnect heartbeats, publication, unauthenticated denial",
   );
+  await testBuzzerDatabase(postgres, db);
+  await db.query(await readFile('supabase/migrations/202610270003_competition.sql','utf8'));
+  console.log('PASS Phase IV migration preserves populated Phase II/III rooms');
+  await testCompetitionDatabase(postgres, db);
   await testBuzzerDatabase(postgres, db);
 } finally {
   if (db) await db.end();
