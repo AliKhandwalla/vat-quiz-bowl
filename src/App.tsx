@@ -232,7 +232,7 @@ export default function App() {
               </span>
             </span>
             <span className="phase-label">
-              PHASE 04 <span>COMPETITION MANAGEMENT</span>
+              v1.0.0 <span>LIVE COMPETITION</span>
             </span>
           </div>
           {(live.configurationError || live.error || error) && (
@@ -732,25 +732,40 @@ export default function App() {
                   <span className="square-icon blue">
                     <Icon icon={LogIn} size={26} />
                   </span>
-                  <h2>Take your place at the buzzer.</h2>
+                  <h2>
+                    {live.session?.role === "player"
+                      ? "Restoring your player session."
+                      : "Take your place at the buzzer."}
+                  </h2>
                   <p>
-                    Join from the overview with your host’s room code, display
-                    name, and team name.
+                    {live.session?.role === "player"
+                      ? "Connecting to your saved room. Your identity and team will return when the connection is restored."
+                      : "Join from the overview with your host’s room code, display name, and team name."}
                   </p>
-                  <button
-                    className="button primary"
-                    onClick={() => {
-                      navigate("home");
-                      setTimeout(() => {
-                        document
-                          .getElementById("join-room")
-                          ?.scrollIntoView({ behavior: "smooth" });
-                        joinRef.current?.focus();
-                      }, 50);
-                    }}
-                  >
-                    Join a Game <ArrowRight size={18} />
-                  </button>
+                  {live.session?.role === "player" ? (
+                    <button
+                      className="button primary"
+                      disabled={live.busy}
+                      onClick={live.reconnect}
+                    >
+                      Retry connection <RotateCcw size={18} />
+                    </button>
+                  ) : (
+                    <button
+                      className="button primary"
+                      onClick={() => {
+                        navigate("home");
+                        setTimeout(() => {
+                          document
+                            .getElementById("join-room")
+                            ?.scrollIntoView({ behavior: "smooth" });
+                          joinRef.current?.focus();
+                        }, 50);
+                      }}
+                    >
+                      Join a Game <ArrowRight size={18} />
+                    </button>
+                  )}
                 </section>
               ) : (
                 <div className="player-layout">

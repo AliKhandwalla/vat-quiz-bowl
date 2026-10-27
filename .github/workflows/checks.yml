@@ -17,5 +17,5 @@ jobs:
       - run: npm test
       - run: npm run test:database
       - run: npm run build
-      - run: node scripts/audit-repository.mjs
+      - run: node scripts/audit-repository.mjs --dist
 # Live integration intentionally remains opt-in: it writes isolated test data.

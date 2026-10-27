@@ -1,8 +1,8 @@
-# VAT Quiz Bowl
+# VAT Quiz Bowl v1.0.0
 
 Live quiz bowl rooms for the Village Academic Team, built with React, TypeScript, Vite, Tailwind CSS, Lucide React, and Supabase Auth/PostgreSQL/Realtime. Hosts manage teams, scoring, questions, authoritative buzzers, and final standings. Students join by room code and use a phone or keyboard buzzer. The existing visual design is retained.
 
-Phase V adds a reconnect race fix, tested credential/build guards, production security headers and refreshable routes, vendor chunks, repository checks, and deployment preparation. See [verification evidence and remaining release gates](docs/PRODUCTION-AUDIT.md) and the [real-session acceptance checklist](docs/ACCEPTANCE.md). Deployment and public-use acceptance remain manual.
+The initial release includes tested configuration/startup guards, authoritative reconnect recovery, production security headers, refreshable dashboard routes, and repository checks. See [release notes](RELEASE_NOTES.md), [changelog](CHANGELOG.md), the [current release audit](docs/RELEASE-AUDIT.md), and the [exact deployment guide](docs/DEPLOYMENT.md). The [Phase V audit](docs/PRODUCTION-AUDIT.md) is historical evidence. Deployment and public-use acceptance remain manual; this release task creates no tag, push, GitHub release, or deployment.
 
 ## Setup / upgrade
 
@@ -16,7 +16,7 @@ Phase V adds a reconnect race fix, tested credential/build guards, production se
 5. Keep `quiz_private` out of Data API exposed schemas. The public schema supplies the restricted RPCs. The migrations enable Realtime publication for `quiz_rooms`, `quiz_players`, `quiz_buzzer`, `quiz_teams`, `quiz_matches`, and `quiz_competition`.
 6. Run `npm run dev` and open the printed localhost URL.
 
-The supplied project is configured in ignored `.env.local`; all three migrations were previously applied. Phase V requires **no new migration**, environment variable, or privileged frontend credential. The public key cannot install SQL migrations, which is why the SQL Editor step is necessary. Existing Phase IV projects should not rerun migrations.
+The supplied project is configured in ignored `.env.local`; hosted tests verify that the existing schema/RPCs work. v1.0.0 requires **no new migration**, environment variable, or privileged frontend credential. The public key cannot inspect all administrative settings or install SQL migrations; follow the SQL Editor/setup steps for a fresh project. Already migrated Phase IV/V projects should not rerun migrations.
 
 `npm run build` runs TypeScript and creates `dist/`. `npm run preview` serves that build locally. Hash routes work on static hosting; Vercel also supports `/host` and `/player` refreshes through `vercel.json`. A localhost address is accessible only on that machine. No frontend was deployed during this work.
 
@@ -28,13 +28,15 @@ Review `git status` and `git diff` before committing. Environment files, depende
 npm test
 npm run test:database
 npm run build
-node scripts/audit-repository.mjs
+node scripts/audit-repository.mjs --dist
 git add .
 git commit -m "Prepare VAT Quiz Bowl for deployment"
 git push
 ```
 
-These Git commands are for the owner to run; no push is performed automatically. A GitHub Actions workflow runs local tests, disposable PostgreSQL checks, build, and credential scanning after publication. It has not run on GitHub yet. Live integration is opt-in and writes test records; it is excluded from CI.
+These Git commands are for the owner to approve and run; no push, tag, or release is performed automatically. A GitHub Actions workflow runs local tests, disposable PostgreSQL checks, build, and credential scanning after publication. The workflow's hosted execution was not inspected in this release task. Live integration is opt-in and writes test records; it is excluded from CI.
+
+Follow [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) for the full ten-step procedure and production sign-off. Quick settings:
 
 1. In Vercel, **Add New → Project → Import Git Repository**, select this GitHub repository and its root directory. Choose Vite, Node.js **24.x**, install `npm ci`, build `npm run build`, output `dist`. The checked-in config supplies build/output settings, security headers, and the two dashboard path aliases (including trailing slashes).
 2. Add `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY` in Vercel Project Settings → Environment Variables for Production and any intended Preview/Development environment. The existing `VITE_SUPABASE_ANON_KEY` remains an alternative. Prefer a separate staging Supabase project for previews; otherwise preview users write to the same database. Never supply secret/service-role keys. These values are embedded at build time: rebuild after changes. Vercel builds reject missing configuration, non-HTTPS backend URLs, and privileged/invalid keys (including an unused fallback).
@@ -122,6 +124,8 @@ The local scoring reducer has been removed. All displayed team scores come from 
 
 ## Verification
 
+Current command outcomes, changed-file inventory, release gates, and browser observations are recorded in [docs/RELEASE-AUDIT.md](docs/RELEASE-AUDIT.md). No lint tool is configured; strict TypeScript checking is part of the production build.
+
 ```sh
 npm test
 npm run test:database
@@ -129,7 +133,7 @@ npm run test:integration
 npm run build
 ```
 
-`npm test` verifies stale-response protection for buzzer/competition state, leaderboard ordering/ties including negative scores, offline/channel recovery gating, path/hash routing, privileged-key rejection, and Vercel build configuration guards.
+`npm test` runs 15 checks covering stale buzzer/competition responses, tied/negative standings, recovery gating, path/hash routing, privileged-key rejection, Vercel configuration, malformed origins, consistent public-key parsing, actionable auth/rate-limit/offline errors, corrupt session descriptors, and idempotent creation credentials. The credential scanner's `--dist` option also inspects the built artifact; GitHub CI runs it after the build.
 
 `test:database` starts an isolated PostgreSQL cluster under `.test-db/`. It runs Phase II/III tests, applies Phase IV to those populated rooms, tests team management and assignment retention, positive/negative/custom scoring, validation, same-request retries, concurrent host scoring/advances, stale buzzes, match end/reset, frozen tied results, history, RLS and authorization, and then reruns the Phase III contention/reconnection tests after the upgrade. Contention uses separate connections and real row-lock waits. The test stops/removes only its verified temporary cluster.
 
