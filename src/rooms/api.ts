@@ -1,5 +1,13 @@
 import { configurationError, ensureGuest, supabase } from "../lib/supabase";
-import type { LivePlayer, LiveRoom, RoomSession, RoomSnapshot } from "./types";
+import type {
+  LivePlayer,
+  LiveRoom,
+  RoomSession,
+  RoomSnapshot,
+  BuzzerAction,
+  BuzzerState,
+  BuzzResult,
+} from "./types";
 import {
   finishCreation,
   pendingCreation,
@@ -27,6 +35,12 @@ export function friendlyError(error: unknown): string {
     return "That room code was not found. Check the six-character code with your host.";
   if (message.includes("ROOM_CLOSED"))
     return "This room is not accepting new players. Ask your host to reopen joining.";
+  if (message.includes("BUZZER_MIGRATION_REQUIRED"))
+    return "The Phase III buzzer migration is required. Apply supabase/migrations/202610270002_quiz_buzzer.sql in the Supabase SQL Editor, then retry.";
+  if (message.includes("STALE_ROUND"))
+    return "The round changed before this action arrived. The latest state is being refreshed; review it before trying again.";
+  if (message.includes("ROUND_LOCKED"))
+    return "A player has already buzzed first. Start the next question to clear the winner.";
   if (message.includes("HOST_UNAUTHORIZED"))
     return "Host authorization failed. Only the original host session can change this room.";
   if (
@@ -129,5 +143,29 @@ export function setAcceptingPlayers(
     p_room_id: session.roomId,
     p_host_token: session.hostToken,
     p_accepting: accepting,
+  });
+}
+
+export function controlBuzzer(
+  session: RoomSession,
+  roundId: string,
+  action: BuzzerAction,
+): Promise<BuzzerState> {
+  if (session.role !== "host") throw new Error("HOST_UNAUTHORIZED");
+  return rpc<BuzzerState>("control_quiz_buzzer", {
+    p_room_id: session.roomId,
+    p_host_token: session.hostToken,
+    p_expected_round: roundId,
+    p_action: action,
+  });
+}
+export function submitBuzz(
+  session: RoomSession,
+  roundId: string,
+): Promise<BuzzResult> {
+  if (session.role !== "player") throw new Error("NOT_A_MEMBER");
+  return rpc<BuzzResult>("submit_quiz_buzz", {
+    p_room_id: session.roomId,
+    p_round_id: roundId,
   });
 }

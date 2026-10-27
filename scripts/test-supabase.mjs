@@ -5,6 +5,7 @@ import assert from "node:assert/strict";
 import { randomBytes, randomUUID } from "node:crypto";
 import { loadEnv } from "vite";
 import { createClient } from "@supabase/supabase-js";
+import { testBuzzerSupabase } from "./test-buzzer-supabase.mjs";
 
 const env = { ...loadEnv("development", ".", "VITE_"), ...process.env };
 const url = env.VITE_SUPABASE_URL;
@@ -259,9 +260,19 @@ try {
       "PASS offline player retained after heartbeat expiry and reconnected with original player ID",
     );
   }
-  console.log(
-    "Live Supabase integration checks passed. Test room is closed to new players.",
-  );
+  await testBuzzerSupabase({
+    host,
+    player,
+    outsider,
+    room,
+    token,
+    makeClient: () => {
+      const client = independentClient();
+      clients.push(client);
+      return client;
+    },
+  });
+  console.log("Live Supabase room and buzzer integration checks passed.");
 } finally {
   if (room)
     await host.rpc("set_quiz_room_joining", {

@@ -21,6 +21,24 @@ export type RoomSnapshot = {
   players: LivePlayer[];
   server_time: string;
   is_host: boolean;
+  buzzer: BuzzerState | null;
+};
+export type BuzzerState = {
+  room_id: string;
+  round_id: string;
+  round_number: number;
+  revision: number;
+  status: "ready" | "paused" | "locked";
+  winning_player_id: string | null;
+  winning_at: string | null;
+  winning_name: string | null;
+  winning_team: string | null;
+};
+export type BuzzerAction = "start" | "pause" | "reset";
+export type BuzzResult = {
+  accepted: boolean;
+  reason: "accepted" | "stale_round" | "paused" | "duplicate" | "locked";
+  buzzer: BuzzerState;
 };
 export type Connection =
   "idle" | "connecting" | "connected" | "reconnecting" | "offline";

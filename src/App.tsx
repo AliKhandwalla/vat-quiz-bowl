@@ -2,7 +2,6 @@ import { useEffect, useMemo, useReducer, useRef, useState } from "react";
 import {
   ArrowDown,
   ArrowRight,
-  Bell,
   BookOpen,
   Check,
   ChevronRight,
@@ -14,10 +13,7 @@ import {
   LogIn,
   Minus,
   Monitor,
-  Pause,
-  Play,
   Plus,
-  Radio,
   RotateCcw,
   ShieldCheck,
   Sparkles,
@@ -30,6 +26,8 @@ import type { LucideIcon } from "lucide-react";
 import { gameReducer, initialGame } from "./demo";
 import { useRoom } from "./rooms/useRoom";
 import { isOnline } from "./rooms/types";
+import { HostBuzzer } from "./components/HostBuzzer";
+import { PlayerBuzzer } from "./components/PlayerBuzzer";
 
 type Page = "home" | "host" | "player";
 const pageFromHash = (): Page =>
@@ -49,17 +47,13 @@ const Icon = ({
 export default function App() {
   const [page, setPage] = useState<Page>(pageFromHash);
   const live = useRoom();
-  const [game, dispatch] = useReducer(gameReducer, {
-    ...initialGame,
-    players: [],
-  });
+  const [game, dispatch] = useReducer(gameReducer, initialGame);
   const [room, setRoom] = useState("");
   const [name, setName] = useState("");
   const [team, setTeam] = useState("Blue");
   const [error, setError] = useState("");
   const [copied, setCopied] = useState(false);
   const [help, setHelp] = useState(false);
-  const [resetConfirm, setResetConfirm] = useState(false);
   const joinRef = useRef<HTMLInputElement>(null);
   const copyTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
@@ -91,36 +85,20 @@ export default function App() {
   );
   const teams = Array.from(new Set(players.map((p) => p.team)));
   const scoreTeams = teams.length ? teams : ["Blue", "Gold"];
-  const opponent = players.find((p) => p.id !== selfId);
   const playerName = ownPlayer?.display_name ?? name;
   const playerTeam = ownPlayer?.team_name ?? team;
-  const winner = game.players.find((p) => p.id === game.first);
-  const isFirst = !!selfId && game.first === selfId;
-  const locked = !!game.first && !isFirst;
-  const buzz = () => dispatch({ type: "buzz", id: selfId });
+  const buzzer = live.snapshot?.buzzer ?? null;
+  const winner =
+    buzzer?.status === "locked"
+      ? {
+          id: buzzer.winning_player_id,
+          name: buzzer.winning_name,
+          team: buzzer.winning_team,
+        }
+      : null;
   useEffect(() => {
     dispatch({ type: "reset" });
   }, [live.session?.roomId]);
-  useEffect(() => {
-    dispatch({ type: "roster", players });
-  }, [players]);
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if (
-        page === "player" &&
-        joined &&
-        event.code === "Space" &&
-        !(event.target instanceof HTMLInputElement) &&
-        !(event.target instanceof HTMLSelectElement) &&
-        !(event.target instanceof HTMLButtonElement)
-      ) {
-        event.preventDefault();
-        dispatch({ type: "buzz", id: selfId });
-      }
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [page, joined, selfId]);
   async function copyCode() {
     try {
       await navigator.clipboard.writeText(roomCode);
@@ -236,11 +214,11 @@ export default function App() {
               <strong>Live rooms. Familiar competition.</strong>
               <span className="banner-detail">
                 {" "}
-                Players sync live. Buzzers and scores remain local demos.
+                Live rooms and buzzers. Scores remain a local preview.
               </span>
             </span>
             <span className="phase-label">
-              PHASE 02 <span>REALTIME ROOMS</span>
+              PHASE 03 <span>REALTIME BUZZERS</span>
             </span>
           </div>
           {(live.configurationError || live.error || error) && (
@@ -255,6 +233,13 @@ export default function App() {
                   Retry connection
                 </button>
               )}
+            </section>
+          )}
+          {live.snapshot && !buzzer && (
+            <section className="connection-notice" role="alert">
+              Live buzzers require the Phase III migration. Apply
+              supabase/migrations/202610270002_quiz_buzzer.sql in the Supabase
+              SQL Editor, then retry the connection.
             </section>
           )}
           {live.session && (
@@ -291,13 +276,12 @@ export default function App() {
               <div>
                 <strong>From question to quick thinking.</strong>
                 <p>
-                  Create a room and share its code. Students can join from
-                  independent browsers or devices with their name and team. Room
-                  membership is live; buzzer and score controls are local
-                  demonstrations only. Guest and host credentials stay in
-                  session storage. Reopening the same tab preserves membership.
-                  Online status expires after 75 seconds without a heartbeat;
-                  mobile sleep may show a player offline until they return.
+                  Create a room and share its code. Students join with their
+                  name and team. Start opens a new round; Pause disables
+                  buzzing. Next question and Reset clear the winner and open a
+                  new round. The first valid buzz accepted by the server wins
+                  and locks everyone else out. Scores remain local previews.
+                  Refreshing restores authoritative room and buzzer state.
                 </p>
               </div>
               <button className="text-button" onClick={() => setHelp(false)}>
@@ -616,121 +600,12 @@ export default function App() {
               </section>
               <div className="dashboard-grid">
                 <div className="dashboard-main">
-                  <section className="card round-card">
-                    <div className="card-heading">
-                      <h2>
-                        <Icon icon={Radio} /> Buzzer control{" "}
-                        <span className="local-badge">LOCAL DEMO</span>
-                      </h2>
-                      <span
-                        className={`status-pill ${game.phase === "live" ? "green" : ""}`}
-                      >
-                        {game.phase === "live"
-                          ? "Round live"
-                          : game.phase === "paused"
-                            ? "Paused"
-                            : "Waiting to start"}
-                      </span>
-                    </div>
-                    <div
-                      className={`buzzer-status ${winner ? "has-winner" : ""}`}
-                      aria-live="polite"
-                    >
-                      <span className="round-label">
-                        ROUND {String(game.round).padStart(2, "0")}
-                      </span>
-                      <span className="status-icon">
-                        <Icon
-                          icon={
-                            winner
-                              ? Trophy
-                              : game.phase === "paused"
-                                ? Pause
-                                : Bell
-                          }
-                          size={35}
-                        />
-                      </span>
-                      <h3>
-                        {winner
-                          ? winner.name
-                          : game.phase === "live"
-                            ? "The floor is open."
-                            : game.phase === "paused"
-                              ? "Take a breather."
-                              : "Ready for the first question?"}
-                      </h3>
-                      <p>
-                        {winner
-                          ? `BUZZED FIRST · TEAM ${winner.team.toUpperCase()}`
-                          : game.phase === "live"
-                            ? "Buzzers are open. Let the quick thinking begin."
-                            : game.phase === "paused"
-                              ? "Buzzers are paused. Resume when everyone is ready."
-                              : "Start the round to open the buzzers."}
-                      </p>
-                      {winner && (
-                        <span className="first-badge">
-                          <Zap size={14} /> Local demo first buzz · no result is
-                          sent to other devices
-                        </span>
-                      )}
-                    </div>
-                    <div className="round-controls">
-                      <button
-                        className="button primary"
-                        disabled={game.phase === "live"}
-                        onClick={() => dispatch({ type: "start" })}
-                      >
-                        <Play size={17} />
-                        {game.phase === "paused" ? "Resume" : "Start round"}
-                      </button>
-                      <button
-                        className="button secondary"
-                        disabled={game.phase !== "live"}
-                        onClick={() => dispatch({ type: "pause" })}
-                      >
-                        <Pause size={17} />
-                        Pause
-                      </button>
-                      <button
-                        className="button secondary"
-                        disabled={game.phase === "ready"}
-                        onClick={() => dispatch({ type: "next" })}
-                      >
-                        <ArrowRight size={17} />
-                        Next round
-                      </button>
-                      <button
-                        className="icon-button reset-button"
-                        aria-label="Reset game"
-                        title="Reset game"
-                        onClick={() => setResetConfirm(true)}
-                      >
-                        <RotateCcw size={18} />
-                      </button>
-                    </div>
-                    {resetConfirm && (
-                      <div className="confirm-reset">
-                        <span>Reset scores and return to round 1?</span>
-                        <button
-                          className="text-button"
-                          onClick={() => {
-                            dispatch({ type: "reset" });
-                            setResetConfirm(false);
-                          }}
-                        >
-                          Reset game
-                        </button>
-                        <button
-                          className="text-button"
-                          onClick={() => setResetConfirm(false)}
-                        >
-                          Cancel
-                        </button>
-                      </div>
-                    )}
-                  </section>
+                  <HostBuzzer
+                    state={buzzer}
+                    connection={live.connection}
+                    busy={live.busy}
+                    onControl={live.control}
+                  />
                   <section className="card">
                     <div className="card-heading">
                       <h2>
@@ -753,7 +628,7 @@ export default function App() {
                       )}
                       {players.map((player, i) => (
                         <div
-                          className={`player-row ${player.id === game.first ? "winner-row" : ""}`}
+                          className={`player-row ${player.id === winner?.id ? "winner-row" : ""}`}
                           key={player.id}
                         >
                           <span
@@ -772,9 +647,9 @@ export default function App() {
                             </strong>
                             <small>Team {player.team}</small>
                           </span>
-                          {player.id === game.first ? (
+                          {player.id === winner?.id ? (
                             <span className="first-text">
-                              <Zap size={14} /> Demo buzz
+                              <Zap size={14} /> First buzz
                             </span>
                           ) : (
                             <span
@@ -786,16 +661,7 @@ export default function App() {
                                 : "Offline"}
                             </span>
                           )}
-                          <button
-                            className="simulate-button"
-                            disabled={game.phase !== "live" || !!game.first}
-                            onClick={() =>
-                              dispatch({ type: "buzz", id: player.id })
-                            }
-                            aria-label={`Simulate ${player.name} buzzing`}
-                          >
-                            Demo buzz <Zap size={13} />
-                          </button>
+
                           <span className="player-number">
                             {String(i + 1).padStart(2, "0")}
                           </span>
@@ -804,7 +670,7 @@ export default function App() {
                     </div>
                     <div className="card-note">
                       <Sparkles size={14} /> Live roster · offline players are
-                      retained. “Demo buzz” affects this tab only.
+                      retained. Winner results synchronize across this room.
                     </div>
                   </section>
                 </div>
@@ -825,8 +691,7 @@ export default function App() {
                           <span className="team-dot" />
                           Team {t}
                           <span>
-                            {game.players.filter((p) => p.team === t).length}{" "}
-                            players
+                            {players.filter((p) => p.team === t).length} players
                           </span>
                         </div>
                         <div className="score-number">
@@ -868,9 +733,9 @@ export default function App() {
                     <Icon icon={Volume2} />
                     <h3>Read. Pause. Reveal.</h3>
                     <p>
-                      Round controls, buzzers, and scores are local previews.
-                      Only rooms, players, joining permissions, and online
-                      status are synchronized in Phase II.
+                      Buzzers and round controls are live. The server accepts
+                      one valid winner per round. Scores remain a local preview
+                      until a later phase.
                     </p>
                   </div>
                 </aside>
@@ -921,86 +786,16 @@ export default function App() {
                 </section>
               ) : (
                 <div className="player-layout">
-                  <section className="card player-arena">
-                    <div className="player-arena-top">
-                      <div className="identity">
-                        <span
-                          className={`player-avatar ${playerTeam.toLowerCase() === "gold" ? "gold" : "blue"}`}
-                        >
-                          {playerName.slice(0, 2).toUpperCase()}
-                        </span>
-                        <span>
-                          <strong>{playerName}</strong>
-                          <small>Team {playerTeam}</small>
-                        </span>
-                      </div>
-                      <span className="round-label">
-                        ROUND {String(game.round).padStart(2, "0")}
-                      </span>
-                    </div>
-                    <div className="local-demo-notice">
-                      Local buzzer demo · your buzz is not sent to the host.
-                    </div>
-                    <div className="player-state" aria-live="polite">
-                      <span
-                        className={`status-pill ${isFirst ? "gold-pill" : locked ? "" : game.phase === "live" ? "green" : ""}`}
-                      >
-                        <span />
-                        {isFirst
-                          ? "Buzzed First"
-                          : locked
-                            ? "Locked Out"
-                            : game.phase === "paused"
-                              ? "Paused"
-                              : "Ready"}
-                      </span>
-                      <h2>
-                        {isFirst
-                          ? "You’re first. Make it count!"
-                          : locked
-                            ? `${winner?.name} got there first.`
-                            : game.phase === "live"
-                              ? "Know it? Show it."
-                              : game.phase === "paused"
-                                ? "A moment to regroup."
-                                : "Your next moment is coming."}
-                      </h2>
-                      <p>
-                        {isFirst
-                          ? "Your team has the floor. Give your answer to the moderator."
-                          : locked
-                            ? "Hang tight. Your buzzer will unlock next round."
-                            : game.phase === "live"
-                              ? "Tap the buzzer when you have the answer."
-                              : "Waiting for the moderator to open the buzzers."}
-                      </p>
-                    </div>
-                    <button
-                      className={`player-buzz ${isFirst ? "buzz-winner" : ""}`}
-                      disabled={game.phase !== "live" || !!game.first}
-                      onClick={buzz}
-                    >
-                      <Zap size={54} fill="currentColor" />
-                      <span>
-                        {isFirst ? "FIRST!" : locked ? "LOCKED" : "BUZZ"}
-                      </span>
-                      <small>
-                        {isFirst
-                          ? "THE FLOOR IS YOURS"
-                          : "TRUST YOUR KNOWLEDGE"}
-                      </small>
-                    </button>
-                    <span className="keyboard-hint">
-                      Tap to buzz{" "}
-                      <span>
-                        or press <kbd>space</kbd> on a keyboard
-                      </span>
-                    </span>
-                    <div className="player-arena-footer">
-                      <ShieldCheck size={15} />
-                      Local buzzer preview. Live room membership.
-                    </div>
-                  </section>
+                  <PlayerBuzzer
+                    state={buzzer}
+                    selfId={selfId}
+                    name={playerName}
+                    team={playerTeam}
+                    connection={live.connection}
+                    buzzing={live.buzzing}
+                    error={live.buzzError}
+                    onBuzz={live.buzz}
+                  />
                   <aside>
                     <section className="card player-summary">
                       <h2>
@@ -1019,48 +814,21 @@ export default function App() {
                         </div>
                       ))}
                     </section>
-                    <section className="tip-card demo-controls">
+                    <section className="tip-card live-room-help">
                       <span className="eyebrow muted">
-                        <Sparkles size={13} /> LOCAL DEMO CONTROLS
+                        <Zap size={13} /> LIVE BUZZER
                       </span>
-                      <h3>Try the whole experience.</h3>
+                      <h3>Listen. Think. Buzz.</h3>
                       <p>
-                        These previews affect only your browser. Live host
-                        buzzer controls and scoring are reserved for a later
-                        phase.
+                        One winner is accepted by the server. The host opens a
+                        new round to unlock every buzzer. Network arrival order
+                        can differ from physical press order.
                       </p>
                       <button
                         className="button secondary"
-                        disabled={game.phase === "live" && !game.first}
-                        onClick={() =>
-                          dispatch({
-                            type:
-                              game.phase === "paused" && !game.first
-                                ? "start"
-                                : game.phase === "ready"
-                                  ? "start"
-                                  : "next",
-                          })
-                        }
+                        onClick={() => void live.refresh()}
                       >
-                        <Play size={16} />
-                        {game.phase === "ready"
-                          ? "Open buzzers"
-                          : game.phase === "paused" && !game.first
-                            ? "Resume round"
-                            : "Next round"}
-                      </button>
-                      <button
-                        className="text-button"
-                        disabled={
-                          !opponent || game.phase !== "live" || !!game.first
-                        }
-                        onClick={() =>
-                          opponent &&
-                          dispatch({ type: "buzz", id: opponent.id })
-                        }
-                      >
-                        Simulate another player <Zap size={15} />
+                        Refresh room state <RotateCcw size={15} />
                       </button>
                     </section>
                   </aside>

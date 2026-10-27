@@ -7,6 +7,7 @@ import { readFile, mkdir, mkdtemp } from "node:fs/promises";
 import { resolve, join } from "node:path";
 import { createServer } from "node:net";
 import EmbeddedPostgres from "embedded-postgres";
+import { testBuzzerDatabase } from "./test-buzzer-database.mjs";
 
 const testRoot = resolve(".test-db");
 await mkdir(testRoot, { recursive: true });
@@ -55,6 +56,9 @@ try {
   `);
   await db.query(
     await readFile("supabase/migrations/202610270001_quiz_rooms.sql", "utf8"),
+  );
+  await db.query(
+    await readFile("supabase/migrations/202610270002_quiz_buzzer.sql", "utf8"),
   );
   console.log("PASS migration executes in PostgreSQL");
 
@@ -225,6 +229,7 @@ try {
     "select tablename from pg_publication_tables where pubname = 'supabase_realtime'",
   );
   assert.deepEqual(publication.rows.map((row) => row.tablename).sort(), [
+    "quiz_buzzer",
     "quiz_players",
     "quiz_rooms",
   ]);
@@ -237,6 +242,7 @@ try {
   console.log(
     "PASS host joining controls, retained offline records, reconnect heartbeats, publication, unauthenticated denial",
   );
+  await testBuzzerDatabase(postgres, db);
 } finally {
   if (db) await db.end();
   // The only recursively removed path is the verified, newly created test

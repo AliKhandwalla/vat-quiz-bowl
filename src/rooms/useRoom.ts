@@ -3,7 +3,14 @@ import { configurationError, supabase } from "../lib/supabase";
 import * as api from "./api";
 import { readRoomSession, saveRoomSession } from "./storage";
 import { HEARTBEAT_MS } from "./types";
-import type { Connection, RoomSession, RoomSnapshot } from "./types";
+import type {
+  BuzzerAction,
+  BuzzerState,
+  Connection,
+  RoomSession,
+  RoomSnapshot,
+} from "./types";
+import { mergeBuzzer, mergeSnapshot } from "./state";
 
 export function useRoom() {
   const [session, setSession] = useState<RoomSession | null>(() =>
@@ -12,11 +19,26 @@ export function useRoom() {
   const [snapshot, setSnapshot] = useState<RoomSnapshot | null>(null);
   const [connection, setConnection] = useState<Connection>("idle");
   const [error, setError] = useState("");
+  const [actionError, setActionError] = useState("");
+  const [buzzError, setBuzzError] = useState("");
+  const [buzzing, setBuzzing] = useState(false);
   const [busy, setBusy] = useState(false);
   const [retry, setRetry] = useState(0);
   const [serverOffset, setServerOffset] = useState(0);
   const [clock, setClock] = useState(Date.now());
   const actionRunning = useRef(false);
+  const refreshRef = useRef<() => Promise<void>>(async () => {});
+  const buzzFlight = useRef<symbol | null>(null);
+  const currentSession = useRef(session);
+  currentSession.current = session;
+
+  useEffect(() => {
+    // A new authoritative round can accept a new attempt even if an old HTTP
+    // response is still in flight. That old response cannot unlock/overwrite it.
+    buzzFlight.current = null;
+    setBuzzing(false);
+    setBuzzError("");
+  }, [session?.roomId, session?.role, snapshot?.buzzer?.round_id]);
 
   useEffect(() => {
     if (session?.role !== "host") return;
@@ -46,6 +68,7 @@ export function useRoom() {
     let fetchAgain = false;
     let pulsing = false;
     let subscribed = false;
+    let subscriptionEpoch = 0;
     let debounce: ReturnType<typeof setTimeout> | undefined;
     setConnection(navigator.onLine ? "connecting" : "offline");
 
@@ -56,14 +79,16 @@ export function useRoom() {
         return;
       }
       fetching = true;
+      const startedInEpoch = subscriptionEpoch;
       try {
         const next = await api.getSnapshot(session!);
         if (disposed) return;
-        setSnapshot(next);
+        setSnapshot((previous) => mergeSnapshot(previous, next));
         setServerOffset(Date.parse(next.server_time) - Date.now());
         setClock(Date.now());
         setError("");
-        if (subscribed) setConnection("connected");
+        if (subscribed && startedInEpoch === subscriptionEpoch)
+          setConnection("connected");
       } catch (failure) {
         if (!disposed) {
           setError(api.friendlyError(failure));
@@ -77,6 +102,7 @@ export function useRoom() {
         }
       }
     }
+    refreshRef.current = refresh;
     function queueRefresh() {
       clearTimeout(debounce);
       debounce = setTimeout(() => void refresh(), 100);
@@ -115,6 +141,27 @@ export function useRoom() {
         {
           event: "*",
           schema: "public",
+          table: "quiz_buzzer",
+          filter: `room_id=eq.${session.roomId}`,
+        },
+        (payload) => {
+          if (disposed) return;
+          const state = payload.new as BuzzerState;
+          if (
+            state.room_id === session.roomId &&
+            typeof state.revision === "number"
+          ) {
+            // Critical buzzer events are applied immediately. Roster snapshots
+            // remain debounced; no extra delay is added to winner delivery.
+            setSnapshot((previous) => mergeBuzzer(previous, state));
+          } else queueRefresh();
+        },
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
           table: "quiz_players",
           filter: `room_id=eq.${session.roomId}`,
         },
@@ -134,7 +181,9 @@ export function useRoom() {
         if (disposed) return;
         subscribed = status === "SUBSCRIBED";
         if (subscribed) {
-          setConnection("connected");
+          subscriptionEpoch += 1;
+          // Do not re-enable a retained/stale buzzer before the recovery read.
+          void refresh();
           void pulse();
         } else if (["CHANNEL_ERROR", "TIMED_OUT", "CLOSED"].includes(status)) {
           setConnection(navigator.onLine ? "reconnecting" : "offline");
@@ -162,6 +211,7 @@ export function useRoom() {
     document.addEventListener("visibilitychange", visible);
     return () => {
       disposed = true;
+      if (refreshRef.current === refresh) refreshRef.current = async () => {};
       clearInterval(interval);
       clearTimeout(debounce);
       window.removeEventListener("offline", offline);
@@ -176,7 +226,7 @@ export function useRoom() {
       if (actionRunning.current) return false;
       actionRunning.current = true;
       setBusy(true);
-      setError("");
+      setActionError("");
       try {
         const next = await operation();
         if (next) {
@@ -185,7 +235,7 @@ export function useRoom() {
         }
         return true;
       } catch (failure) {
-        setError(api.friendlyError(failure));
+        setActionError(api.friendlyError(failure));
         return false;
       } finally {
         actionRunning.current = false;
@@ -195,11 +245,70 @@ export function useRoom() {
     [],
   );
 
+  async function buzz() {
+    const state = snapshot?.buzzer;
+    if (
+      !session ||
+      session.role !== "player" ||
+      !state ||
+      state.status !== "ready" ||
+      connection !== "connected" ||
+      buzzFlight.current
+    )
+      return;
+    const flight = Symbol("buzz");
+    buzzFlight.current = flight;
+    setBuzzing(true);
+    setBuzzError("");
+    try {
+      const result = await api.submitBuzz(session, state.round_id);
+      if (currentSession.current?.roomId !== session.roomId) return;
+      setSnapshot((previous) => mergeBuzzer(previous, result.buzzer));
+      if (buzzFlight.current === flight && !result.accepted) {
+        if (result.reason === "stale_round")
+          setBuzzError(
+            "That attempt belonged to an earlier round. Check the current state before buzzing again.",
+          );
+        if (result.reason === "paused")
+          setBuzzError("Buzzers are paused. Waiting for host.");
+      }
+    } catch (failure) {
+      if (buzzFlight.current === flight) {
+        setBuzzError(
+          `${api.friendlyError(failure)} Your buzz was not confirmed; refreshing the server state.`,
+        );
+        void refreshRef.current();
+      }
+    } finally {
+      if (buzzFlight.current === flight) {
+        buzzFlight.current = null;
+        setBuzzing(false);
+      }
+    }
+  }
+
+  async function control(action: BuzzerAction) {
+    const state = snapshot?.buzzer;
+    const success = await run(async () => {
+      if (!session) throw new Error("HOST_UNAUTHORIZED");
+      if (!state) throw new Error("BUZZER_MIGRATION_REQUIRED");
+      const next = await api.controlBuzzer(session, state.round_id, action);
+      setSnapshot((previous) => mergeBuzzer(previous, next));
+    });
+    if (!success) void refreshRef.current();
+    return success;
+  }
+
   return {
     session,
     snapshot,
     connection,
-    error,
+    error: actionError || error,
+    buzz,
+    buzzing,
+    buzzError,
+    control,
+    refresh: () => refreshRef.current(),
     busy,
     configurationError,
     serverNow: clock + serverOffset,
@@ -210,7 +319,9 @@ export function useRoom() {
       run(async () => {
         if (!session) throw new Error("HOST_UNAUTHORIZED");
         const room = await api.setAcceptingPlayers(session, accepting);
-        setSnapshot((current) => (current ? { ...current, room } : null));
+        setSnapshot((current) =>
+          current?.room.id === room.id ? { ...current, room } : current,
+        );
       }),
     reconnect: () => setRetry((value) => value + 1),
     forget: () => {
@@ -218,6 +329,7 @@ export function useRoom() {
       setSession(null);
       setSnapshot(null);
       setError("");
+      setActionError("");
     },
   };
 }
