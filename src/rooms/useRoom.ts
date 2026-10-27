@@ -19,6 +19,7 @@ import type {
   CompetitionRequest,
 } from "./types";
 import { mergeBuzzer, mergeSnapshot } from "./state";
+import { createRecoveryGate } from "./recovery";
 
 export function useRoom() {
   const [session, setSession] = useState<RoomSession | null>(() =>
@@ -84,9 +85,10 @@ export function useRoom() {
   }, [session]);
 
   useEffect(() => {
+    if (!session) return;
     const tick = setInterval(() => setClock(Date.now()), 5_000);
     return () => clearInterval(tick);
-  }, []);
+  }, [session]);
 
   useEffect(() => {
     if (!session || !supabase) {
@@ -99,8 +101,7 @@ export function useRoom() {
     let fetching = false;
     let fetchAgain = false;
     let pulsing = false;
-    let subscribed = false;
-    let subscriptionEpoch = 0;
+    const recovery = createRecoveryGate();
     let debounce: ReturnType<typeof setTimeout> | undefined;
     setConnection(navigator.onLine ? "connecting" : "offline");
 
@@ -111,7 +112,7 @@ export function useRoom() {
         return;
       }
       fetching = true;
-      const startedInEpoch = subscriptionEpoch;
+      const ticket = recovery.beginRead();
       try {
         const next = await api.getSnapshot(session!);
         if (disposed) return;
@@ -122,9 +123,10 @@ export function useRoom() {
           setCompetitionSyncing(false);
         setServerOffset(Date.parse(next.server_time) - Date.now());
         setClock(Date.now());
-        setError("");
-        if (subscribed && startedInEpoch === subscriptionEpoch)
+        if (recovery.canConnect(ticket, navigator.onLine)) {
+          setError("");
           setConnection("connected");
+        }
       } catch (failure) {
         if (!disposed) {
           setError(api.friendlyError(failure));
@@ -239,13 +241,12 @@ export function useRoom() {
       )
       .subscribe((status) => {
         if (disposed) return;
-        subscribed = status === "SUBSCRIBED";
-        if (subscribed) {
-          subscriptionEpoch += 1;
+        if (status === "SUBSCRIBED") {
+          recovery.subscribe();
           // Do not re-enable a retained/stale buzzer before the recovery read.
           void refresh();
-          void pulse();
         } else if (["CHANNEL_ERROR", "TIMED_OUT", "CLOSED"].includes(status)) {
+          recovery.invalidate();
           setConnection(navigator.onLine ? "reconnecting" : "offline");
           setError(
             "Live updates disconnected. Reconnecting automatically; room snapshots continue to refresh.",
@@ -257,6 +258,7 @@ export function useRoom() {
     // expire even without a disconnect event or a database cleanup process.
     const interval = setInterval(() => void pulse(), HEARTBEAT_MS);
     const offline = () => {
+      recovery.invalidate();
       setConnection("offline");
       setError("You are offline. Reconnect to restore live room updates.");
     };
@@ -271,6 +273,7 @@ export function useRoom() {
     document.addEventListener("visibilitychange", visible);
     return () => {
       disposed = true;
+      recovery.dispose();
       if (refreshRef.current === refresh) refreshRef.current = async () => {};
       clearInterval(interval);
       clearTimeout(debounce);

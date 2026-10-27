@@ -7,6 +7,7 @@ import { loadEnv } from "vite";
 import { createClient } from "@supabase/supabase-js";
 import { testBuzzerSupabase } from "./test-buzzer-supabase.mjs";
 import { testCompetitionSupabase } from "./test-competition-supabase.mjs";
+import { testNetworkSupabase } from "./test-network-supabase.mjs";
 
 const env = { ...loadEnv("development", ".", "VITE_"), ...process.env };
 const url = env.VITE_SUPABASE_URL;
@@ -22,7 +23,7 @@ if (
 )
   throw new Error("Only a publishable/anon key is allowed.");
 
-function independentClient() {
+function independentClient(transport = fetch) {
   const values = new Map();
   return createClient(url, key, {
     auth: {
@@ -38,7 +39,7 @@ function independentClient() {
     },
     global: {
       fetch: (input, init) =>
-        fetch(input, { ...init, signal: AbortSignal.timeout(15_000) }),
+        transport(input, { ...init, signal: AbortSignal.timeout(15_000) }),
     },
   });
 }
@@ -304,6 +305,17 @@ try {
   console.log(
     "Live Supabase room, buzzer, and competition integration checks passed.",
   );
+  await testNetworkSupabase({
+    host,
+    player,
+    room,
+    token,
+    makeClient: (transport) => {
+      const client = independentClient(transport);
+      clients.push(client);
+      return client;
+    },
+  });
 } finally {
   if (room)
     await host.rpc("set_quiz_room_joining", {

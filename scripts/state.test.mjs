@@ -7,6 +7,41 @@ import {
 } from "../src/rooms/state.ts";
 import { rankTeams } from "../src/rooms/leaderboard.ts";
 import { isDefinitiveFailure } from "../src/rooms/errors.ts";
+import { createRecoveryGate } from "../src/rooms/recovery.ts";
+import { resolvePage } from "../src/routing.ts";
+
+test("offline and channel loss prevent delayed reads from restoring connected state", () => {
+  const gate = createRecoveryGate();
+  const beforeSubscription = gate.beginRead();
+  gate.subscribe();
+  assert.equal(gate.canConnect(beforeSubscription, true), false);
+  const connectedRead = gate.beginRead();
+  assert.equal(gate.canConnect(connectedRead, true), true);
+  assert.equal(gate.canConnect(connectedRead, false), false);
+  gate.invalidate();
+  assert.equal(gate.canConnect(connectedRead, true), false);
+  const whileDisconnected = gate.beginRead();
+  assert.equal(gate.canConnect(whileDisconnected, true), false);
+  gate.subscribe();
+  assert.equal(gate.canConnect(whileDisconnected, true), false);
+  const recoveredRead = gate.beginRead();
+  assert.equal(gate.canConnect(recoveredRead, true), true);
+  gate.dispose();
+  assert.equal(gate.canConnect(recoveredRead, true), false);
+  gate.subscribe();
+  assert.equal(gate.canConnect(gate.beginRead(), true), false);
+});
+
+test("path aliases refresh into dashboards and existing hash navigation takes priority", () => {
+  for (const page of ["host", "player"]) {
+    assert.equal(resolvePage(`/${page}`, ""), page);
+    assert.equal(resolvePage(`/${page}/`, ""), page);
+    assert.equal(resolvePage("/", `#/${page}`), page);
+    assert.equal(resolvePage(`/${page}`, "#/"), "home");
+  }
+  assert.equal(resolvePage("/unknown", ""), "home");
+  assert.equal(resolvePage("/host", "#/player"), "player");
+});
 
 const state = (revision, round = "round-1", status = "ready") => ({
   room_id: "room-a",

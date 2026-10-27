@@ -1,10 +1,12 @@
-# VAT Quiz Bowl — Phase IV
+# VAT Quiz Bowl
 
-The existing React, TypeScript, Vite, Tailwind CSS, and Lucide interface now supports a complete live quiz bowl match: host-managed teams, persistent scoring, question/round tracking, authoritative buzzers, final standings, and new matches. Existing routes, branding, guest sessions, and room codes are retained. No Phase V deployment work is included.
+Live quiz bowl rooms for the Village Academic Team, built with React, TypeScript, Vite, Tailwind CSS, Lucide React, and Supabase Auth/PostgreSQL/Realtime. Hosts manage teams, scoring, questions, authoritative buzzers, and final standings. Students join by room code and use a phone or keyboard buzzer. The existing visual design is retained.
+
+Phase V adds a reconnect race fix, tested credential/build guards, production security headers and refreshable routes, vendor chunks, repository checks, and deployment preparation. See [verification evidence and remaining release gates](docs/PRODUCTION-AUDIT.md) and the [real-session acceptance checklist](docs/ACCEPTANCE.md). Deployment and public-use acceptance remain manual.
 
 ## Setup / upgrade
 
-1. Use Node.js 24 (or 22.18+) and run `npm install`.
+1. Use Node.js 24 (`.nvmrc`) and run `npm ci` from the repository directory.
 2. Copy `.env.example` to `.env.local` and set the Supabase URL and browser-safe **publishable** key (or legacy **anon** key). Never use a service-role key, secret key, or database password in frontend configuration. Restart Vite after changing environment variables.
 3. Enable **Anonymous Sign-Ins** in Supabase Authentication → Sign In / Providers. Guests receive signed identities without a sign-in form.
 4. In the Supabase SQL Editor, execute each required migration **in order**, copying the entire file including `begin` / `commit`:
@@ -14,9 +16,41 @@ The existing React, TypeScript, Vite, Tailwind CSS, and Lucide interface now sup
 5. Keep `quiz_private` out of Data API exposed schemas. The public schema supplies the restricted RPCs. The migrations enable Realtime publication for `quiz_rooms`, `quiz_players`, `quiz_buzzer`, `quiz_teams`, `quiz_matches`, and `quiz_competition`.
 6. Run `npm run dev` and open the printed localhost URL.
 
-The supplied project is configured in ignored `.env.local`; all three migrations were applied and live integration tests executed during this phase. No new environment variables or privileged credentials are required for Phase IV. The public key cannot install SQL migrations, which is why the SQL Editor step is necessary.
+The supplied project is configured in ignored `.env.local`; all three migrations were previously applied. Phase V requires **no new migration**, environment variable, or privileged frontend credential. The public key cannot install SQL migrations, which is why the SQL Editor step is necessary. Existing Phase IV projects should not rerun migrations.
 
-`npm run build` runs TypeScript and creates `dist/`. `npm run preview` serves that build locally. Hash routes work on static hosting. This phase does not publish the frontend or change hosting. A localhost address is accessible only on that machine; an already hosted frontend must receive the updated build for other devices to use these changes.
+`npm run build` runs TypeScript and creates `dist/`. `npm run preview` serves that build locally. Hash routes work on static hosting; Vercel also supports `/host` and `/player` refreshes through `vercel.json`. A localhost address is accessible only on that machine. No frontend was deployed during this work.
+
+## Publish to GitHub and deploy on Vercel
+
+Review `git status` and `git diff` before committing. Environment files, dependencies, build output, previews, local test clusters, and `.vercel/` are ignored; `.env.example` stays public. Generated preview images were removed from the Git index while preserving local copies. Previous image commits remain in history; review them for your privacy requirements. The credential scanner is heuristic and cannot certify absence of personal data.
+
+```sh
+npm test
+npm run test:database
+npm run build
+node scripts/audit-repository.mjs
+git add .
+git commit -m "Prepare VAT Quiz Bowl for deployment"
+git push
+```
+
+These Git commands are for the owner to run; no push is performed automatically. A GitHub Actions workflow runs local tests, disposable PostgreSQL checks, build, and credential scanning after publication. It has not run on GitHub yet. Live integration is opt-in and writes test records; it is excluded from CI.
+
+1. In Vercel, **Add New → Project → Import Git Repository**, select this GitHub repository and its root directory. Choose Vite, Node.js **24.x**, install `npm ci`, build `npm run build`, output `dist`. The checked-in config supplies build/output settings, security headers, and the two dashboard path aliases (including trailing slashes).
+2. Add `VITE_SUPABASE_URL` and `VITE_SUPABASE_PUBLISHABLE_KEY` in Vercel Project Settings → Environment Variables for Production and any intended Preview/Development environment. The existing `VITE_SUPABASE_ANON_KEY` remains an alternative. Prefer a separate staging Supabase project for previews; otherwise preview users write to the same database. Never supply secret/service-role keys. These values are embedded at build time: rebuild after changes. Vercel builds reject missing configuration, non-HTTPS backend URLs, and privileged/invalid keys (including an unused fallback).
+3. Deploy when ready. In Supabase Auth URL Configuration, review/set the Site URL to the final HTTPS production origin and review allowed redirects; keep only required development/preview origins. Current anonymous Auth has no redirect callback, so adding redirect URLs does not prove it works. Verify a fresh anonymous host and student on the **actual deployed domain** using the acceptance checklist. This has not been tested on a deployed origin.
+4. Review Supabase Security Advisor, exposed schemas (`quiz_private` must stay private), project quotas, backups, and anonymous-signup rate limits/abuse controls before public use. Many students share one school IP. The documented default is 30 anonymous signups per IP/hour; assess the intended class size and settings. CAPTCHA token handling is not implemented: enabling a CAPTCHA requirement alone would break guest creation. Resolve abuse prevention before unrestricted public release. [Supabase anonymous sign-ins](https://supabase.com/docs/guides/auth/auth-anonymous).
+5. Verify HTTPS, refresh `/host`, `/player`, and existing hash links, inspect Network/Console for blocked requests, and run a complete match on school Wi-Fi. The CSP currently permits hosted `*.supabase.co` HTTPS/WebSocket connections; adjust `connect-src` if deliberately using a custom Supabase domain. No other external scripts or analytics are required. [Vercel Vite deployment](https://vercel.com/docs/frameworks/frontend/vite).
+
+For local production-header checks, run `node scripts/serve-production.mjs` after building, then in a second terminal run `node scripts/test-static.mjs`. This serves only loopback port 4173 and is a QA helper, not a deployment emulator. `node scripts/bundle-size.mjs` reports raw/gzip JavaScript sizes. Stop the server with Ctrl+C.
+
+## Known limitations and release gates
+
+- Guest/host identity and pending requests are tab-session scoped. Refresh preserves them; closing/clearing the session or changing devices does not provide account or host recovery. Independently open tabs for different participants; duplicated tabs may clone identity.
+- First buzz means server acceptance order; physical press order across networks is not measurable here. No automatic grading, scoring, question bank, or latency compensation is included.
+- A single room channel and 20-second heartbeat/fallback snapshots provide recovery; offline status expires after 75 seconds. Large rosters generate fan-out reads. Expected full-club load, actual phones/Safari, Wi-Fi interruptions, and long sessions remain release checks; small tests do not prove capacity.
+- Anonymous account/room creation and room-code guessing lack application-specific quotas/CAPTCHA. Room codes permit joining an open room, not hosting; they are invite codes, not passwords. RLS protects unrelated rooms until a user joins. Keep a supervised pilot while resolving abuse controls and shared-IP signup capacity.
+- Test/Auth records and historical matches persist. Define an administrator-controlled retention/backup policy and review student display names before public repository screenshots or shared rooms. No destructive cleanup job is installed.
 
 ## Run a match
 
@@ -84,7 +118,7 @@ Guest tokens, host credentials, active room, and unconfirmed actions use session
 | `src/rooms/storage.ts` | Session credentials and unconfirmed request persistence |
 | `supabase/migrations/202610270003_competition.sql` | Teams, matches, revisions, request receipts, RLS, restricted operations, backfill |
 
-The local scoring reducer has been removed. All displayed team scores come from Supabase. No new framework, service-role key, tournament feature, or deployment integration was introduced.
+The local scoring reducer has been removed. All displayed team scores come from Supabase. No new framework, service-role key, or tournament feature was introduced. Phase V deployment configuration is separate from the room/competition API.
 
 ## Verification
 
@@ -95,11 +129,11 @@ npm run test:integration
 npm run build
 ```
 
-`npm test` verifies stale-response protection for buzzer/competition state and leaderboard ordering/ties, including negative scores.
+`npm test` verifies stale-response protection for buzzer/competition state, leaderboard ordering/ties including negative scores, offline/channel recovery gating, path/hash routing, privileged-key rejection, and Vercel build configuration guards.
 
 `test:database` starts an isolated PostgreSQL cluster under `.test-db/`. It runs Phase II/III tests, applies Phase IV to those populated rooms, tests team management and assignment retention, positive/negative/custom scoring, validation, same-request retries, concurrent host scoring/advances, stale buzzes, match end/reset, frozen tied results, history, RLS and authorization, and then reruns the Phase III contention/reconnection tests after the upgrade. Contention uses separate connections and real row-lock waits. The test stops/removes only its verified temporary cluster.
 
-`test:integration` uses the configured Supabase public key and independent guest sessions. It tests actual Realtime delivery for rooms, buzzes, team assignments, scores, counters, match state, and final results; unauthorized requests; score retries; stale questions; new-match resets; and restored player identity/teams/history. The optional `--presence` flag retains the Phase II 80-second heartbeat-expiry test. Test rooms close to joining afterward; database/Auth test records remain for administrator inspection/cleanup.
+`test:integration` uses the configured Supabase public key and independent guest sessions. It tests actual Realtime delivery for rooms, buzzes, team assignments, scores, counters, match state, and final results; unauthorized requests; score retries; stale questions; new-match resets; and restored player identity/teams/history. Client-only network fault injection additionally discards real buzz/score replies after commit and verifies safe recovery/retry. The optional `--presence` flag retains the Phase II 80-second heartbeat-expiry test. Test rooms close to joining afterward; database/Auth test records remain for administrator inspection/cleanup. Run live tests only against a project where you authorize these isolated writes; never substitute a privileged key.
 
 Browser verification covers host team create/rename/archive, assignment, mouse buzzing, scoring-team override, positive/negative/custom adjustments, shortcut configuration, counters, tied summary, new match, reconnect, and phone layout. Automated checks and live tests must be rerun after relevant changes; a successful polling snapshot alone does not prove Realtime delivery.
 

@@ -7,3 +7,5 @@ dist/
 !.env.example
 supabase/.temp/
 .test-db/
+preview/
+.vercel/

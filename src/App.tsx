@@ -33,13 +33,9 @@ import { isOnline } from "./rooms/types";
 import { HostBuzzer } from "./components/HostBuzzer";
 import { PlayerBuzzer } from "./components/PlayerBuzzer";
 
-type Page = "home" | "host" | "player";
-const pageFromHash = (): Page =>
-  location.hash === "#/host"
-    ? "host"
-    : location.hash === "#/player"
-      ? "player"
-      : "home";
+import { resolvePage } from "./routing";
+import type { Page } from "./routing";
+const pageFromHash = (): Page => resolvePage(location.pathname, location.hash);
 const Icon = ({
   icon: Component,
   size = 20,
@@ -63,8 +59,10 @@ export default function App() {
   useEffect(() => {
     const listener = () => setPage(pageFromHash());
     window.addEventListener("hashchange", listener);
+    window.addEventListener("popstate", listener);
     return () => {
       window.removeEventListener("hashchange", listener);
+      window.removeEventListener("popstate", listener);
       if (copyTimer.current) clearTimeout(copyTimer.current);
     };
   }, []);

@@ -8,7 +8,8 @@ import { resolve, join } from "node:path";
 import { createServer } from "node:net";
 import EmbeddedPostgres from "embedded-postgres";
 import { testBuzzerDatabase } from "./test-buzzer-database.mjs";
-import { testCompetitionDatabase } from './test-competition-database.mjs';
+import { testCompetitionDatabase } from "./test-competition-database.mjs";
+import { testSecurityMetadata } from "./test-security-database.mjs";
 
 const testRoot = resolve(".test-db");
 await mkdir(testRoot, { recursive: true });
@@ -34,6 +35,9 @@ const postgres = new EmbeddedPostgres({
     "listen_addresses=127.0.0.1",
     "-c",
     "wal_level=logical",
+    // PG18 worker I/O can leave an orphan io_worker holding postgres.exe on
+    // Windows after this disposable cluster stops. SQL/locking stay unchanged.
+    ...(process.platform === "win32" ? ["-c", "io_method=sync"] : []),
   ],
   onLog: () => {},
   onError: (message) => {
@@ -244,10 +248,13 @@ try {
     "PASS host joining controls, retained offline records, reconnect heartbeats, publication, unauthenticated denial",
   );
   await testBuzzerDatabase(postgres, db);
-  await db.query(await readFile('supabase/migrations/202610270003_competition.sql','utf8'));
-  console.log('PASS Phase IV migration preserves populated Phase II/III rooms');
+  await db.query(
+    await readFile("supabase/migrations/202610270003_competition.sql", "utf8"),
+  );
+  console.log("PASS Phase IV migration preserves populated Phase II/III rooms");
   await testCompetitionDatabase(postgres, db);
   await testBuzzerDatabase(postgres, db);
+  await testSecurityMetadata(db);
 } finally {
   if (db) await db.end();
   // The only recursively removed path is the verified, newly created test
